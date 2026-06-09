@@ -1,0 +1,10 @@
+*.x
+*.o
+*.a
+*.pi
+*.mrb
+*.BIN
+*.bin
+build/
+tmp/
+*.log
