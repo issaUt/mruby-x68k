@@ -75,6 +75,9 @@ MRUBY_CONFIG=x68k rake -j2
 build/x68k/bin/mruby.x
 ```
 
+配布用の `mruby.x` では、`mruby --version` / `mruby -v` で `mruby-x68k` のバージョンも表示するため、
+[patches/mruby-bin-mruby-x68k-version.patch](patches/mruby-bin-mruby-x68k-version.patch) を mruby 側の `mruby-bin-mruby` に適用しています。
+
 詳細は [docs/build-wsl.md](docs/build-wsl.md) を参照してください。
 
 ## X68000 と Ruby の相性メモ

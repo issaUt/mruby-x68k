@@ -1,0 +1,31 @@
+--- a/mrbgems/mruby-bin-mruby/tools/mruby/mruby.c
++++ b/mrbgems/mruby-bin-mruby/tools/mruby/mruby.c
+@@ -42,6 +42,13 @@
+ };
+ 
+ static void
++x68k_show_version(void)
++{
++  printf("mruby-x68k 0.1.0\n");
++  printf("target: X68000 / Human68k\n");
++}
++
++static void
+ usage(const char *name)
+ {
+   static const char *const usage_msg[] = {
+@@ -202,12 +209,14 @@
+     }
+     else if (strcmp(opt, "v") == 0) {
+       if (!args->verbose) {
++        x68k_show_version();
+         mrb_show_version(mrb);
+         args->version = TRUE;
+       }
+       args->verbose = TRUE;
+     }
+     else if (strcmp(opt, "version") == 0) {
++      x68k_show_version();
+       mrb_show_version(mrb);
+       exit(EXIT_SUCCESS);
+     }
