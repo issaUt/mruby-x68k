@@ -880,6 +880,7 @@ x68k_bg_put(mrb_state *mrb, mrb_value self)
     mrb_raise(mrb, E_ARGUMENT_ERROR, "BG text page must be 0 or 1");
   }
   base[(int)y * 64 + (int)x] = x68k_bg_attr(code, color, h_flip, v_flip);
+  *(volatile unsigned short *)0x00eb0808 |= 0x0203;
   if (old_super > 0) {
     _iocs_b_super(old_super);
   }
@@ -1189,7 +1190,7 @@ x68k_sprite_def16(mrb_state *mrb, mrb_value self)
     *reg1++ = x68k_pack_sprite_nibbles(row + 12);
   }
 
-  *(volatile unsigned short *)0x00eb0808 |= 0x0200;
+  *(volatile unsigned short *)0x00eb0808 |= 0x0203;
   if (old_super > 0) {
     _iocs_b_super(old_super);
   }
@@ -1226,7 +1227,7 @@ x68k_sprite_put(mrb_state *mrb, mrb_value self)
   reg[1] = (unsigned short)y;
   reg[2] = ctrl;
   reg[3] = pwr;
-  *(volatile unsigned short *)0x00eb0808 |= 0x0200;
+  *(volatile unsigned short *)0x00eb0808 |= 0x0203;
   if (old_super > 0) {
     _iocs_b_super(old_super);
   }
