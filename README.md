@@ -79,11 +79,15 @@ samples/ZMD/snare.pcm       ADPCMテスト用
 ```text
 mruby maze_chase.rb joy 4
 mruby maze_chase.rb key 2
+mruby maze_chase.rb wait=2
+mruby maze_chase.rb speed=30
 mruby maze_chase.rb noaudio
 mruby maze_chase.rb clear
 ```
 
 `clear` はクリア表示確認用のテストモードです。
+`wait=N` はゲームループごとに待つVBlank数です。高速な実機では `wait=2` などで速度を落とせます。
+`speed=30` は `wait=2` 相当の指定です。
 `noaudio` / `no-audio` を指定すると Z-MUSIC なしで実行できます。
 ファイル名は X68000 / Human68k で扱いやすいよう、拡張子込み21文字以内にしています。
 実装上のメモは [docs/game-sample-notes.md](docs/game-sample-notes.md) にまとめています。

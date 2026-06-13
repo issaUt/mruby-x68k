@@ -72,6 +72,7 @@ input_mode = INPUT_JOY
 ghost_count = 4
 clear_test = false
 audio_requested = true
+frame_wait = 1
 i = 0
 while i < ARGV.length
   arg = ARGV[i]
@@ -89,6 +90,11 @@ while i < ARGV.length
     ghost_count = arg[2, arg.length - 2].to_i
   elsif arg == "clear" || arg == "testclear"
     clear_test = true
+  elsif arg[0, 5] == "wait="
+    frame_wait = arg[5, arg.length - 5].to_i
+  elsif arg[0, 6] == "speed="
+    speed = arg[6, arg.length - 6].to_i
+    frame_wait = 60 / speed if speed > 0
   elsif arg[0, 1] >= "0" && arg[0, 1] <= "9"
     ghost_count = arg.to_i
   end
@@ -97,6 +103,8 @@ while i < ARGV.length
 end
 ghost_count = 0 if ghost_count < 0
 ghost_count = 4 if ghost_count > 4
+frame_wait = 1 if frame_wait < 1
+frame_wait = 6 if frame_wait > 6
 
 MAP = [
   "############################",
@@ -581,6 +589,14 @@ def draw_lives(lives)
   X68k::Bg.main_put(25, 0, (HUD_DIGIT + lives) * 4, 1)
 end
 
+def wait_game_frame(count)
+  i = 0
+  while i < count
+    X68k::Crtc.wait_vblank
+    i += 1
+  end
+end
+
 def wait_escape_message(message)
   x = 13
   y = 17
@@ -1049,7 +1065,7 @@ while !quit
   end
   power_timer -= 1 if power_timer > 0
   frame += 1
-  X68k::Crtc.wait_vblank
+  wait_game_frame(frame_wait)
 end
 
 wait_escape_message("CLEAR") if clear
