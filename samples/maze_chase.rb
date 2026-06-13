@@ -47,10 +47,31 @@ INPUT_BOTH = 2
 POWER_FRAMES = 174
 POWER_WARN_FRAMES = 54
 START_LIVES = 5
+MISS_WAIT_FRAMES = 90
+
+def first_existing(paths)
+  i = 0
+  while i < paths.length
+    return paths[i] if File.exist?(paths[i])
+    i += 1
+  end
+  nil
+end
+
+NORMAL_BGM = first_existing(["simplebgm.ZMD", "ZMD/simplebgm.ZMD"])
+ATTACK_BGM = first_existing(["attackbgm.ZMD", "ZMD/attackbgm.ZMD"])
+EAT_SE = first_existing(["eat.ZMD", "ZMD/eat.ZMD"])
+CHARGE_SE = first_existing(["charge.ZMD", "ZMD/charge.ZMD"])
+MISS_SE = first_existing(["miss.ZMD", "ZMD/miss.ZMD"])
+SE_TRACK = 7
+EAT_SE_SLOT = 0
+CHARGE_SE_SLOT = 1
+MISS_SE_SLOT = 2
 
 input_mode = INPUT_JOY
 ghost_count = 4
 clear_test = false
+audio_requested = true
 i = 0
 while i < ARGV.length
   arg = ARGV[i]
@@ -72,6 +93,7 @@ while i < ARGV.length
     ghost_count = arg.to_i
   end
   i += 1
+  audio_requested = false if arg == "noaudio" || arg == "no-audio"
 end
 ghost_count = 0 if ghost_count < 0
 ghost_count = 4 if ghost_count > 4
@@ -123,6 +145,9 @@ FIX_ONE = 256
 PLAYER_SPEED = 512
 GHOST_SPEED = 384
 GHOST_FRIGHT_SPEED = 256
+GHOST_TUNNEL_SPEED = 256
+WARP_ROW = 14
+WARP_SLOW_CELLS = 7
 MAP_W = MAP[0].length
 MAP_H = MAP.length
 
@@ -290,12 +315,22 @@ def make_hud_char(n)
   data
 end
 
+def warp_row?(ty)
+  ty == WARP_ROW
+end
+
+def warp_exit?(tx, ty, dir)
+  return false unless warp_row?(ty)
+  (dir == DIR_LEFT && tx == 0) || (dir == DIR_RIGHT && tx == MAP_W - 2)
+end
+
 def can_move?(x, y, actor, dir)
   return false if dir == DIR_STOP
   tx = (x + LOGIC_OFS_X - 8 - MAP_X) / 8
   ty = (y + LOGIC_OFS_Y - 8 - MAP_Y) / 8
   nx = tx + DIR_DX[dir]
   ny = ty + DIR_DY[dir]
+  return true if warp_exit?(tx, ty, dir) && (nx < 0 || nx + 1 >= MAP_W)
   return false if nx < 0 || ny < 0 || nx + 1 >= MAP_W || ny + 1 >= MAP_H
 
   gate = false
@@ -379,6 +414,19 @@ end
 
 def pixel_y_from_cell(ty)
   MAP_Y + ty * 8 + 8 - LOGIC_OFS_Y
+end
+
+def warp_x(x, y)
+  ty = cell_y(y)
+  return x unless warp_row?(ty)
+  tx = cell_x(x)
+  return pixel_x_from_cell(MAP_W - 2) if tx < 0
+  return pixel_x_from_cell(0) if tx > MAP_W - 2
+  x
+end
+
+def tunnel_slow?(x, y)
+  warp_row?(cell_y(y)) && (cell_x(x) < WARP_SLOW_CELLS || cell_x(x) > MAP_W - WARP_SLOW_CELLS - 2)
 end
 
 def clamp_cell_x(tx)
@@ -546,8 +594,21 @@ def wait_escape_message(message)
       ch = X68k::Key.input & 0xff
       break if ch == 27
     end
-    X68k::Sys.wait(1)
+    X68k::Crtc.wait_vblank
   end
+end
+
+def wait_frames(frames)
+  i = 0
+  while i < frames
+    if X68k::Key.sense != 0
+      ch = X68k::Key.input & 0xff
+      return true if ch == 27
+    end
+    X68k::Crtc.wait_vblank
+    i += 1
+  end
+  false
 end
 
 def eat_at(x, y)
@@ -662,6 +723,10 @@ class Actor
     @fy = next_fy
     @x = next_x
     @y = next_y
+    if @dir == DIR_LEFT || @dir == DIR_RIGHT
+      @x = warp_x(@x, @y)
+      @fx = @x * FIX_ONE
+    end
   end
 
   def draw!(pattern = nil)
@@ -716,7 +781,9 @@ class GhostActor < Actor
     end
     old_x = @x
     old_y = @y
-    move!(frightened ? GHOST_FRIGHT_SPEED : GHOST_SPEED)
+    speed = frightened ? GHOST_FRIGHT_SPEED : GHOST_SPEED
+    speed = GHOST_TUNNEL_SPEED if tunnel_slow?(@x, @y) && !frightened
+    move!(speed)
     if @x == old_x && @y == old_y && centered?(@x, @y)
       reverse!
     end
@@ -845,6 +912,12 @@ while ghosts.length > ghost_count
   ghost.hide!
 end
 
+audio_enabled = audio_requested && X68k::ZMusic.available? && NORMAL_BGM != nil
+audio_mode = 0
+if audio_enabled
+  audio_enabled = X68k::ZMusic.play_bgm(NORMAL_BGM, 100, false) == 0
+end
+
 quit = false
 clear = false
 frame = 0
@@ -887,11 +960,17 @@ while !quit
     draw_score(score)
     if add_score == 50
       power_timer = POWER_FRAMES
+      if audio_enabled && ATTACK_BGM != nil && audio_mode != 1
+        audio_mode = X68k::ZMusic.play_bgm(ATTACK_BGM, 100, false) == 0 ? 1 : audio_mode
+      end
+      X68k::ZMusic.play_se(SE_TRACK, CHARGE_SE, 90, CHARGE_SE_SLOT) if audio_enabled && CHARGE_SE != nil
       i = 0
       while i < ghosts.length
         ghosts[i].vulnerable = true
         i += 1
       end
+    elsif audio_enabled && EAT_SE != nil
+      X68k::ZMusic.play_se(SE_TRACK, EAT_SE, 85, EAT_SE_SLOT)
     end
     if food_left <= 0
       clear = true
@@ -905,6 +984,9 @@ while !quit
       ghosts[i].vulnerable = false
       i += 1
     end
+  end
+  if audio_enabled && power_timer == 1 && audio_mode != 0
+    audio_mode = X68k::ZMusic.play_bgm(NORMAL_BGM, 100, false) == 0 ? 0 : audio_mode
   end
 
   i = 0
@@ -920,13 +1002,23 @@ while !quit
         if ghosts[i].frightened?(power_timer)
           score += 200
           draw_score(score)
+          X68k::ZMusic.play_se(SE_TRACK, CHARGE_SE, 95, CHARGE_SE_SLOT) if audio_enabled && CHARGE_SE != nil
           ghosts[i].reset_home!
         else
           lives -= 1
           draw_lives(lives)
           power_timer = 0
-          reset_round(player, ghosts)
-          if lives <= 0
+          if audio_enabled
+            if MISS_SE != nil
+              X68k::ZMusic.play_bgm(MISS_SE, 100, false)
+            else
+              X68k::ZMusic.stop
+            end
+            audio_mode = -1
+          end
+          quit = wait_frames(MISS_WAIT_FRAMES) if audio_enabled && MISS_SE != nil
+          reset_round(player, ghosts) unless quit
+          if !quit && lives <= 0
             score = 0
             lives = START_LIVES
             food_left = reset_map_data
@@ -934,6 +1026,9 @@ while !quit
             draw_map
             draw_score(score)
             draw_lives(lives)
+          end
+          if !quit && audio_enabled && NORMAL_BGM != nil
+            audio_mode = X68k::ZMusic.play_bgm(NORMAL_BGM, 100, false) == 0 ? 0 : audio_mode
           end
           i = ghosts.length
         end
@@ -954,12 +1049,13 @@ while !quit
   end
   power_timer -= 1 if power_timer > 0
   frame += 1
-  X68k::Sys.wait(1)
+  X68k::Crtc.wait_vblank
 end
 
 wait_escape_message("CLEAR") if clear
 X68k::Sprite.off
 X68k::Bg.off
+X68k::ZMusic.stop if audio_enabled
 X68k::Text.cursor_on
 puts "clear" if clear
 puts "done"

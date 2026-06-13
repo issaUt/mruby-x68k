@@ -3,16 +3,239 @@
 #include <mruby/array.h>
 #include <mruby/data.h>
 #include <mruby/error.h>
+#include <mruby/hash.h>
 #include <mruby/string.h>
 #include <x68k/iocs.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 typedef struct {
   FILE *fp;
 } x68k_file;
 
 static unsigned char x68k_paint_buffer[4096];
+static mrb_bool x68k_super_mode = FALSE;
+static int x68k_super_ssp = 0;
 
+static volatile unsigned long x68k_int_vsync_count = 0;
+static volatile unsigned long x68k_int_raster_count = 0;
+static volatile unsigned long x68k_int_timer_d_count = 0;
+static volatile unsigned long x68k_int_opm_count = 0;
+static mrb_bool x68k_int_vsync_enabled = FALSE;
+static mrb_bool x68k_int_raster_enabled = FALSE;
+static mrb_bool x68k_int_timer_d_enabled = FALSE;
+static mrb_bool x68k_int_opm_enabled = FALSE;
+
+#define X68K_ZMUSIC_SE_SLOTS 4
+#define X68K_ZMUSIC_ADPCM_SLOTS 4
+
+static unsigned char *x68k_zmusic_buffer = NULL;
+static size_t x68k_zmusic_buffer_size = 0;
+static unsigned char *x68k_zmusic_se_buffers[X68K_ZMUSIC_SE_SLOTS];
+static size_t x68k_zmusic_se_buffer_sizes[X68K_ZMUSIC_SE_SLOTS];
+static long x68k_zmusic_se_table_offsets[X68K_ZMUSIC_SE_SLOTS];
+static int x68k_zmusic_se_volumes[X68K_ZMUSIC_SE_SLOTS];
+static char x68k_zmusic_se_paths[X68K_ZMUSIC_SE_SLOTS][96];
+static unsigned char *x68k_zmusic_adpcm_buffers[X68K_ZMUSIC_ADPCM_SLOTS];
+static size_t x68k_zmusic_adpcm_buffer_sizes[X68K_ZMUSIC_ADPCM_SLOTS];
+
+static int
+x68k_zmusic_signature_bytes(unsigned char sig_out[8])
+{
+  const volatile unsigned char *sig;
+  unsigned long entry_addr;
+  int old_super;
+  int i;
+
+  old_super = _iocs_b_super(0);
+  entry_addr = *(volatile unsigned long *)0x8c;
+
+  if (entry_addr < 8 || (entry_addr & 1) != 0) {
+    if (old_super > 0) {
+      _iocs_b_super(old_super);
+    }
+    return 0;
+  }
+
+  sig = (const volatile unsigned char *)(entry_addr - 8);
+  for (i = 0; i < 8; i++) {
+    sig_out[i] = sig[i];
+  }
+
+  if (old_super > 0) {
+    _iocs_b_super(old_super);
+  }
+
+  return 1;
+}
+
+static int
+x68k_zmusic_available_raw(void)
+{
+  unsigned char sig[8];
+
+  if (!x68k_zmusic_signature_bytes(sig)) {
+    return 0;
+  }
+
+  return memcmp(sig, "ZmuSiC", 6) == 0;
+}
+
+static int
+x68k_zmusic_version_raw(void)
+{
+  unsigned char sig[8];
+
+  if (!x68k_zmusic_signature_bytes(sig) || memcmp(sig, "ZmuSiC", 6) != 0) {
+    return -1;
+  }
+
+  return ((int)sig[6] << 8) | (int)sig[7];
+}
+
+static int
+x68k_zmusic_call_d2(int func, long d2)
+{
+  register long reg_d0 __asm__("d0");
+  register long reg_d1 __asm__("d1") = func;
+  register long reg_d2 __asm__("d2") = d2;
+
+  __asm__ volatile (
+    "trap #3"
+    : "=d"(reg_d0)
+    : "d"(reg_d1), "d"(reg_d2)
+    : "d3", "d4", "d5", "d6", "d7", "a0", "a1", "a2", "a3", "a4", "a5", "cc", "memory"
+  );
+
+  return (int)reg_d0;
+}
+
+static int
+x68k_zmusic_call_tracks(int func, long d2, long d3, long d4)
+{
+  register long reg_d0 __asm__("d0");
+  register long reg_d1 __asm__("d1") = func;
+  register long reg_d2 __asm__("d2") = d2;
+  register long reg_d3 __asm__("d3") = d3;
+  register long reg_d4 __asm__("d4") = d4;
+
+  __asm__ volatile (
+    "trap #3"
+    : "=d"(reg_d0)
+    : "d"(reg_d1), "d"(reg_d2), "d"(reg_d3), "d"(reg_d4)
+    : "d5", "d6", "d7", "a0", "a1", "a2", "a3", "a4", "a5", "cc", "memory"
+  );
+
+  return (int)reg_d0;
+}
+
+static int
+x68k_zmusic_call_a1_d2(int func, const void *a1, long d2)
+{
+  register long reg_d0 __asm__("d0");
+  register long reg_d1 __asm__("d1") = func;
+  register long reg_d2 __asm__("d2") = d2;
+  register const void *reg_a1 __asm__("a1") = a1;
+
+  __asm__ volatile (
+    "trap #3"
+    : "=d"(reg_d0)
+    : "d"(reg_d1), "d"(reg_d2), "a"(reg_a1)
+    : "d3", "d4", "d5", "d6", "d7", "a0", "a2", "a3", "a4", "a5", "cc", "memory"
+  );
+
+  return (int)reg_d0;
+}
+
+static int
+x68k_zmusic_call_a1_d2_d3(int func, const void *a1, long d2, long d3)
+{
+  register long reg_d0 __asm__("d0");
+  register long reg_d1 __asm__("d1") = func;
+  register long reg_d2 __asm__("d2") = d2;
+  register long reg_d3 __asm__("d3") = d3;
+  register const void *reg_a1 __asm__("a1") = a1;
+
+  __asm__ volatile (
+    "trap #3"
+    : "=d"(reg_d0)
+    : "d"(reg_d1), "d"(reg_d2), "d"(reg_d3), "a"(reg_a1)
+    : "d4", "d5", "d6", "d7", "a0", "a2", "a3", "a4", "a5", "cc", "memory"
+  );
+
+  return (int)reg_d0;
+}
+
+static int
+x68k_zmusic_call_d2_d3(int func, long d2, long d3)
+{
+  return x68k_zmusic_call_tracks(func, d2, d3, 0);
+}
+
+static void*
+x68k_zmusic_call_a0(int func)
+{
+  register long reg_d1 __asm__("d1") = func;
+  register void *reg_a0 __asm__("a0");
+
+  __asm__ volatile (
+    "trap #3"
+    : "=a"(reg_a0)
+    : "d"(reg_d1)
+    : "d0", "d2", "d3", "d4", "d5", "d6", "d7", "a1", "a2", "a3", "a4", "a5", "cc", "memory"
+  );
+
+  return reg_a0;
+}
+static void
+x68k_zmusic_free_buffer(mrb_state *mrb)
+{
+  if (x68k_zmusic_buffer != NULL) {
+    mrb_free(mrb, x68k_zmusic_buffer);
+    x68k_zmusic_buffer = NULL;
+    x68k_zmusic_buffer_size = 0;
+  }
+}
+
+static long
+x68k_zmusic_adpcm_param(mrb_state *mrb, mrb_int pan, mrb_int frq, mrb_int priority)
+{
+  if (pan < 0 || pan > 3) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "pan must be 0..3");
+  }
+  if (frq < 0 || frq > 4) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "frq must be 0..4");
+  }
+  if (priority < 0 || priority > 255) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "priority must be 0..255");
+  }
+
+  return ((long)priority << 16) | ((long)frq << 8) | (long)pan;
+}
+
+static void
+x68k_zmusic_free_adpcm_buffer(mrb_state *mrb, int slot)
+{
+  if (slot < 0 || slot >= X68K_ZMUSIC_ADPCM_SLOTS) {
+    return;
+  }
+  if (x68k_zmusic_adpcm_buffers[slot] != NULL) {
+    mrb_free(mrb, x68k_zmusic_adpcm_buffers[slot]);
+    x68k_zmusic_adpcm_buffers[slot] = NULL;
+    x68k_zmusic_adpcm_buffer_sizes[slot] = 0;
+  }
+}
+
+static void
+x68k_zmusic_free_adpcm_buffers(mrb_state *mrb)
+{
+  int i;
+
+  for (i = 0; i < X68K_ZMUSIC_ADPCM_SLOTS; i++) {
+    x68k_zmusic_free_adpcm_buffer(mrb, i);
+  }
+}
 static void
 x68k_file_free(mrb_state *mrb, void *ptr)
 {
@@ -309,6 +532,467 @@ x68k_file_open(mrb_state *mrb, mrb_value self)
   return x68k_open_file(mrb, file_class, path, mode);
 }
 
+
+static void
+x68k_zmusic_free_se_buffer(mrb_state *mrb, int slot)
+{
+  if (slot < 0 || slot >= X68K_ZMUSIC_SE_SLOTS) {
+    return;
+  }
+  if (x68k_zmusic_se_buffers[slot] != NULL) {
+    mrb_free(mrb, x68k_zmusic_se_buffers[slot]);
+    x68k_zmusic_se_buffers[slot] = NULL;
+    x68k_zmusic_se_buffer_sizes[slot] = 0;
+    x68k_zmusic_se_table_offsets[slot] = 0;
+    x68k_zmusic_se_volumes[slot] = -1;
+    x68k_zmusic_se_paths[slot][0] = '\0';
+  }
+}
+
+static void
+x68k_zmusic_free_se_buffers(mrb_state *mrb)
+{
+  int i;
+
+  for (i = 0; i < X68K_ZMUSIC_SE_SLOTS; i++) {
+    x68k_zmusic_free_se_buffer(mrb, i);
+  }
+}
+
+static unsigned char*
+x68k_zmusic_load_file(mrb_state *mrb, const char *path, size_t *size_out)
+{
+  FILE *fp;
+  long file_size;
+  unsigned char *buffer;
+  size_t nread;
+
+  fp = fopen(path, "rb");
+  if (fp == NULL) {
+    mrb_sys_fail(mrb, path);
+  }
+  if (fseek(fp, 0, SEEK_END) != 0) {
+    fclose(fp);
+    mrb_sys_fail(mrb, path);
+  }
+  file_size = ftell(fp);
+  if (file_size <= 0) {
+    fclose(fp);
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "empty file");
+  }
+  if (fseek(fp, 0, SEEK_SET) != 0) {
+    fclose(fp);
+    mrb_sys_fail(mrb, path);
+  }
+
+  buffer = (unsigned char*)mrb_malloc(mrb, (size_t)file_size);
+  nread = fread(buffer, 1, (size_t)file_size, fp);
+  if (nread != (size_t)file_size || fclose(fp) != 0) {
+    mrb_free(mrb, buffer);
+    mrb_sys_fail(mrb, path);
+  }
+
+  *size_out = (size_t)file_size;
+  return buffer;
+}
+
+static int
+x68k_zmusic_zmd_strlen(const unsigned char *p, const unsigned char *end)
+{
+  const unsigned char *start = p;
+
+  while (p < end) {
+    if (*p++ == 0) {
+      return (int)(p - start);
+    }
+  }
+
+  return -1;
+}
+
+static int
+x68k_zmusic_zmd_word(const unsigned char *p, const unsigned char *end)
+{
+  if (p + 2 > end) {
+    return -1;
+  }
+
+  return ((int)p[0] << 8) | (int)p[1];
+}
+
+static long
+x68k_zmusic_zmd_track_table_offset(const unsigned char *buffer, size_t size)
+{
+  const unsigned char *p = buffer + 8;
+  const unsigned char *end = buffer + size;
+
+  while (p < end) {
+    int n;
+
+    switch (*p++) {
+    case 0xff:
+      if (((p - buffer) & 1) != 0) {
+        if (p >= end || *p != 0xff) {
+          return -1;
+        }
+        p++;
+      }
+      return (long)(p - buffer);
+    case 0x04:
+    case 0x1b:
+      p += 56;
+      break;
+    case 0x05:
+      p += 2;
+      break;
+    case 0x15:
+      p += 1;
+      break;
+    case 0x18:
+      n = x68k_zmusic_zmd_word(p, end);
+      if (n < 0) return -1;
+      p += 2 + n;
+      break;
+    case 0x40:
+      p += 19;
+      n = x68k_zmusic_zmd_word(p, end);
+      if (n < 0) return -1;
+      if ((n >> 8) == 0) {
+        p += 4;
+      }
+      else {
+        n = x68k_zmusic_zmd_strlen(p, end);
+        if (n < 0) return -1;
+        p += n;
+      }
+      break;
+    case 0x42:
+      p += 5;
+      break;
+    case 0x4a:
+      n = x68k_zmusic_zmd_word(p, end);
+      if (n < 0) return -1;
+      p += 6 + n * 2;
+      break;
+    case 0x60:
+    case 0x61:
+    case 0x62:
+    case 0x63:
+    case 0x7f:
+      n = x68k_zmusic_zmd_strlen(p, end);
+      if (n < 0) return -1;
+      p += n;
+      break;
+    case 0x7e:
+      break;
+    default:
+      return -1;
+    }
+
+    if (p > end) {
+      return -1;
+    }
+  }
+
+  return -1;
+}
+
+static unsigned char*
+x68k_zmusic_load_zmd(mrb_state *mrb, const char *path, size_t *size_out)
+{
+  unsigned char *buffer;
+  size_t file_size;
+
+  buffer = x68k_zmusic_load_file(mrb, path, &file_size);
+  if (file_size < 8) {
+    mrb_free(mrb, buffer);
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "invalid ZMD data");
+  }
+
+  if (buffer[0] != 0x10 || memcmp(buffer + 1, "ZmuSiC", 6) != 0) {
+    mrb_free(mrb, buffer);
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "invalid ZMD data");
+  }
+
+  *size_out = (size_t)file_size;
+  return buffer;
+}
+
+static void
+x68k_zmusic_validate_volume(mrb_state *mrb, mrb_int volume)
+{
+  if (volume < 0 || volume > 100) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "volume must be 0..100");
+  }
+}
+
+static unsigned char
+x68k_zmusic_volume_attenuation(mrb_int volume)
+{
+  static const unsigned char attenuation[101] = {
+    127, 53, 45, 41, 37, 35, 33, 31, 29, 28, 27, 26, 25, 24, 23, 22,
+    21, 21, 20, 19, 19, 18, 18, 17, 17, 16, 16, 15, 15, 14, 14, 14,
+    13, 13, 12, 12, 12, 12, 11, 11, 11, 10, 10, 10, 10, 9, 9, 9,
+    9, 8, 8, 8, 8, 7, 7, 7, 7, 7, 6, 6, 6, 6, 6, 5,
+    5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3,
+    3, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1,
+    0, 0, 0, 0, 0
+  };
+
+  return attenuation[volume];
+}
+
+static void
+x68k_zmusic_scale_zmd_volume(mrb_state *mrb, unsigned char *buffer, size_t size, mrb_int volume)
+{
+  size_t i;
+  unsigned char attenuation;
+
+  x68k_zmusic_validate_volume(mrb, volume);
+  if (volume == 100 || size < 10) {
+    return;
+  }
+
+  attenuation = x68k_zmusic_volume_attenuation(volume);
+  for (i = 8; i + 1 < size; i++) {
+    if (buffer[i] == 0xb6 && buffer[i + 1] <= 127) {
+      int scaled = (int)buffer[i + 1] + (int)attenuation;
+      if (scaled > 127) {
+        scaled = 127;
+      }
+      buffer[i + 1] = (unsigned char)scaled;
+      i++;
+    }
+  }
+}
+static mrb_value
+x68k_zmusic_available(mrb_state *mrb, mrb_value self)
+{
+  return x68k_zmusic_available_raw() ? mrb_true_value() : mrb_false_value();
+}
+
+static mrb_value
+x68k_zmusic_version(mrb_state *mrb, mrb_value self)
+{
+  return mrb_fixnum_value((mrb_int)x68k_zmusic_version_raw());
+}
+
+static mrb_value
+x68k_zmusic_stop(mrb_state *mrb, mrb_value self)
+{
+  int result;
+
+  if (!x68k_zmusic_available_raw()) {
+    return mrb_fixnum_value(-1);
+  }
+
+  result = x68k_zmusic_call_tracks(0x0a, 0, 0, 0);
+
+  return mrb_fixnum_value(result);
+}
+
+static mrb_value
+x68k_zmusic_fadeout(mrb_state *mrb, mrb_value self)
+{
+  mrb_int speed;
+
+  mrb_get_args(mrb, "i", &speed);
+  if (!x68k_zmusic_available_raw()) {
+    return mrb_fixnum_value(-1);
+  }
+
+  return mrb_fixnum_value(x68k_zmusic_call_d2(0x1a, (long)speed));
+}
+
+static mrb_value
+x68k_zmusic_play_bgm(mrb_state *mrb, mrb_value self)
+{
+  char *path;
+  mrb_bool fast = FALSE;
+  mrb_int volume = 100;
+  unsigned char *buffer;
+  size_t size;
+  int result;
+
+  mrb_get_args(mrb, "z|ib", &path, &volume, &fast);
+  if (!x68k_zmusic_available_raw()) {
+    return mrb_fixnum_value(-1);
+  }
+
+  buffer = x68k_zmusic_load_zmd(mrb, path, &size);
+
+  x68k_zmusic_call_tracks(0x0a, 0, 0, 0);
+  x68k_zmusic_free_buffer(mrb);
+  x68k_zmusic_free_se_buffers(mrb);
+  x68k_zmusic_buffer = buffer;
+  x68k_zmusic_buffer_size = size;
+  x68k_zmusic_scale_zmd_volume(mrb, x68k_zmusic_buffer, x68k_zmusic_buffer_size, volume);
+
+  result = x68k_zmusic_call_a1_d2(0x11, x68k_zmusic_buffer + 7,
+                                  fast ? 0 : (long)(x68k_zmusic_buffer_size - 8));
+  if (result != 0) {
+    x68k_zmusic_free_buffer(mrb);
+  }
+
+  return mrb_fixnum_value(result);
+}
+
+static mrb_value
+x68k_zmusic_status(mrb_state *mrb, mrb_value self)
+{
+  unsigned char *status;
+  mrb_value hash;
+  int pcm8_mode;
+
+  if (!x68k_zmusic_available_raw()) {
+    return mrb_nil_value();
+  }
+
+  status = (unsigned char*)x68k_zmusic_call_a0(0x50);
+  if (status == NULL) {
+    return mrb_nil_value();
+  }
+
+  pcm8_mode = ((int)status[4] << 8) | (int)status[5];
+  hash = mrb_hash_new(mrb);
+  mrb_hash_set(mrb, hash, mrb_symbol_value(mrb_intern_lit(mrb, "midi")), status[0] ? mrb_true_value() : mrb_false_value());
+  mrb_hash_set(mrb, hash, mrb_symbol_value(mrb_intern_lit(mrb, "midi_type")), mrb_fixnum_value((mrb_int)(signed char)status[1]));
+  mrb_hash_set(mrb, hash, mrb_symbol_value(mrb_intern_lit(mrb, "force_midi")), status[2] ? mrb_true_value() : mrb_false_value());
+  mrb_hash_set(mrb, hash, mrb_symbol_value(mrb_intern_lit(mrb, "pcm8")), status[3] ? mrb_true_value() : mrb_false_value());
+  mrb_hash_set(mrb, hash, mrb_symbol_value(mrb_intern_lit(mrb, "pcm8_mode")), mrb_fixnum_value((mrb_int)(short)pcm8_mode));
+  mrb_hash_set(mrb, hash, mrb_symbol_value(mrb_intern_lit(mrb, "resident_flags")), mrb_fixnum_value((mrb_int)status[6]));
+  mrb_hash_set(mrb, hash, mrb_symbol_value(mrb_intern_lit(mrb, "play_state")), mrb_fixnum_value((mrb_int)(signed char)status[7]));
+
+  return hash;
+}
+
+static mrb_value
+x68k_zmusic_pcm8(mrb_state *mrb, mrb_value self)
+{
+  unsigned char *status;
+
+  if (!x68k_zmusic_available_raw()) {
+    return mrb_false_value();
+  }
+
+  status = (unsigned char*)x68k_zmusic_call_a0(0x50);
+  if (status == NULL) {
+    return mrb_false_value();
+  }
+
+  return status[3] ? mrb_true_value() : mrb_false_value();
+}
+
+static mrb_value
+x68k_zmusic_play_se(mrb_state *mrb, mrb_value self)
+{
+  mrb_int track;
+  char *path;
+  mrb_int slot = 0;
+  mrb_int volume = 100;
+  unsigned char *buffer;
+  size_t size;
+  long table_offset;
+  int reload;
+
+  mrb_get_args(mrb, "iz|ii", &track, &path, &volume, &slot);
+  if (!x68k_zmusic_available_raw()) {
+    return mrb_fixnum_value(-1);
+  }
+  if (track < 1 || track > 32) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "track must be 1..32");
+  }
+  if (slot < 0 || slot >= X68K_ZMUSIC_SE_SLOTS) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "slot must be 0..3");
+  }
+
+  reload = x68k_zmusic_se_buffers[slot] == NULL ||
+           x68k_zmusic_se_volumes[slot] != (int)volume ||
+           strcmp(x68k_zmusic_se_paths[slot], path) != 0;
+  if (reload) {
+    buffer = x68k_zmusic_load_zmd(mrb, path, &size);
+    table_offset = x68k_zmusic_zmd_track_table_offset(buffer, size);
+    if (table_offset < 0) {
+      mrb_free(mrb, buffer);
+      mrb_raise(mrb, E_ARGUMENT_ERROR, "unsupported ZMD common commands");
+    }
+
+    x68k_zmusic_free_se_buffer(mrb, (int)slot);
+    x68k_zmusic_se_buffers[slot] = buffer;
+    x68k_zmusic_se_buffer_sizes[slot] = size;
+    x68k_zmusic_se_table_offsets[slot] = table_offset;
+    x68k_zmusic_se_volumes[slot] = (int)volume;
+    strncpy(x68k_zmusic_se_paths[slot], path, sizeof(x68k_zmusic_se_paths[slot]) - 1);
+    x68k_zmusic_se_paths[slot][sizeof(x68k_zmusic_se_paths[slot]) - 1] = '\0';
+    x68k_zmusic_scale_zmd_volume(mrb, x68k_zmusic_se_buffers[slot], x68k_zmusic_se_buffer_sizes[slot], volume);
+  }
+
+  table_offset = x68k_zmusic_se_table_offsets[slot];
+
+  x68k_zmusic_call_a1_d2(0x12, x68k_zmusic_se_buffers[slot] + table_offset, (long)track);
+
+  return mrb_fixnum_value(0);
+}
+
+static mrb_value
+x68k_zmusic_play_adpcm(mrb_state *mrb, mrb_value self)
+{
+  char *path;
+  mrb_int pan = 3;
+  mrb_int frq = 4;
+  mrb_int priority = 0;
+  mrb_int slot = 0;
+  unsigned char *buffer;
+  size_t size;
+  long param;
+  int result;
+
+  mrb_get_args(mrb, "z|iiii", &path, &pan, &frq, &priority, &slot);
+  if (!x68k_zmusic_available_raw()) {
+    return mrb_fixnum_value(-1);
+  }
+  if (slot < 0 || slot >= X68K_ZMUSIC_ADPCM_SLOTS) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "slot must be 0..3");
+  }
+
+  param = x68k_zmusic_adpcm_param(mrb, pan, frq, priority);
+  buffer = x68k_zmusic_load_file(mrb, path, &size);
+
+  x68k_zmusic_free_adpcm_buffer(mrb, (int)slot);
+  x68k_zmusic_adpcm_buffers[slot] = buffer;
+  x68k_zmusic_adpcm_buffer_sizes[slot] = size;
+
+  result = x68k_zmusic_call_a1_d2_d3(0x13,
+                                     x68k_zmusic_adpcm_buffers[slot],
+                                     (long)x68k_zmusic_adpcm_buffer_sizes[slot],
+                                     param);
+
+  return mrb_fixnum_value(result);
+}
+
+static mrb_value
+x68k_zmusic_play_adpcm_note(mrb_state *mrb, mrb_value self)
+{
+  mrb_int note;
+  mrb_int pan = 3;
+  mrb_int frq = 4;
+  mrb_int priority = 0;
+  long param;
+  int result;
+
+  mrb_get_args(mrb, "i|iii", &note, &pan, &frq, &priority);
+  if (!x68k_zmusic_available_raw()) {
+    return mrb_fixnum_value(-1);
+  }
+  if (note < 0 || note > 511) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "note must be 0..511");
+  }
+
+  param = x68k_zmusic_adpcm_param(mrb, pan, frq, priority);
+  result = x68k_zmusic_call_d2_d3(0x14, (long)note, param);
+
+  return mrb_fixnum_value(result);
+}
 static mrb_value
 x68k_graph_line(mrb_state *mrb, mrb_value self)
 {
@@ -755,6 +1439,483 @@ x68k_key_bit(mrb_state *mrb, mrb_value self)
 
   mrb_get_args(mrb, "i", &group);
   return mrb_fixnum_value(_iocs_bitsns((int)group));
+}
+
+static int
+x68k_crtc_vdisp_raw(void)
+{
+  return (*(volatile unsigned char*)0x00e88001 & 0x10) != 0;
+}
+
+static int
+x68k_crtc_vdisp_super(void)
+{
+  int old_super;
+  int vdisp;
+
+  old_super = _iocs_b_super(0);
+  vdisp = x68k_crtc_vdisp_raw();
+  if (old_super > 0) {
+    _iocs_b_super(old_super);
+  }
+
+  return vdisp;
+}
+
+static mrb_value
+x68k_crtc_vdisp(mrb_state *mrb, mrb_value self)
+{
+  return x68k_crtc_vdisp_super() ? mrb_true_value() : mrb_false_value();
+}
+
+static mrb_value
+x68k_crtc_vblank(mrb_state *mrb, mrb_value self)
+{
+  return x68k_crtc_vdisp_super() ? mrb_false_value() : mrb_true_value();
+}
+
+static mrb_value
+x68k_crtc_wait_vblank(mrb_state *mrb, mrb_value self)
+{
+  int old_super;
+
+  old_super = _iocs_b_super(0);
+  while (!x68k_crtc_vdisp_raw()) {
+  }
+  while (x68k_crtc_vdisp_raw()) {
+  }
+  if (old_super > 0) {
+    _iocs_b_super(old_super);
+  }
+
+  return mrb_nil_value();
+}
+
+static mrb_bool
+x68k_sys_set_super(mrb_bool mode)
+{
+  mrb_bool old_mode = x68k_super_mode;
+
+  if (mode && !x68k_super_mode) {
+    x68k_super_ssp = _iocs_b_super(0);
+    if (x68k_super_ssp < 0) {
+      x68k_super_ssp = 0;
+    }
+    x68k_super_mode = TRUE;
+  }
+  else if (!mode && x68k_super_mode) {
+    if (x68k_super_ssp != 0) {
+      _iocs_b_super(x68k_super_ssp);
+      x68k_super_ssp = 0;
+    }
+    x68k_super_mode = FALSE;
+  }
+
+  return old_mode;
+}
+
+static mrb_value
+x68k_sys_super_p(mrb_state *mrb, mrb_value self)
+{
+  return x68k_super_mode ? mrb_true_value() : mrb_false_value();
+}
+
+static mrb_value
+x68k_sys_super(mrb_state *mrb, mrb_value self)
+{
+  mrb_bool mode = TRUE;
+
+  mrb_get_args(mrb, "|b", &mode);
+  return x68k_sys_set_super(mode) ? mrb_true_value() : mrb_false_value();
+}
+
+static mrb_value
+x68k_sys_yield_block(mrb_state *mrb, void *userdata)
+{
+  return mrb_yield_argv(mrb, *(mrb_value*)userdata, 0, NULL);
+}
+
+static mrb_value
+x68k_sys_with_super(mrb_state *mrb, mrb_value self)
+{
+  mrb_value block;
+  mrb_bool old_mode;
+  mrb_bool error = FALSE;
+  mrb_value result;
+
+  mrb_get_args(mrb, "&", &block);
+  if (mrb_nil_p(block)) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "block required");
+  }
+
+  old_mode = x68k_sys_set_super(TRUE);
+  result = mrb_protect_error(mrb, x68k_sys_yield_block, &block, &error);
+  x68k_sys_set_super(old_mode);
+  if (error) {
+    mrb_exc_raise(mrb, result);
+  }
+
+  return result;
+}
+
+static unsigned short
+x68k_sys_interrupt_disable_raw(void)
+{
+  unsigned short old_sr;
+
+  __asm__ volatile ("movew %%sr,%0" : "=d"(old_sr));
+  if ((old_sr & 0x2000) != 0) {
+    __asm__ volatile ("movew %0,%%sr" : : "d"((unsigned short)(old_sr | 0x0700)) : "memory");
+  }
+
+  return old_sr;
+}
+
+static void
+x68k_sys_interrupt_enable_raw(unsigned short old_sr)
+{
+  if ((old_sr & 0x2000) != 0) {
+    __asm__ volatile ("movew %0,%%sr" : : "d"(old_sr) : "memory");
+  }
+}
+
+static mrb_value
+x68k_sys_interrupt_disable(mrb_state *mrb, mrb_value self)
+{
+  return mrb_fixnum_value((mrb_int)x68k_sys_interrupt_disable_raw());
+}
+
+static mrb_value
+x68k_sys_interrupt_enable(mrb_state *mrb, mrb_value self)
+{
+  mrb_int old_sr;
+
+  mrb_get_args(mrb, "i", &old_sr);
+  x68k_sys_interrupt_enable_raw((unsigned short)old_sr);
+  return mrb_nil_value();
+}
+
+static mrb_value
+x68k_sys_with_interrupt_disabled(mrb_state *mrb, mrb_value self)
+{
+  mrb_value block;
+  unsigned short old_sr;
+  mrb_bool error = FALSE;
+  mrb_value result;
+
+  mrb_get_args(mrb, "&", &block);
+  if (mrb_nil_p(block)) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "block required");
+  }
+
+  old_sr = x68k_sys_interrupt_disable_raw();
+  result = mrb_protect_error(mrb, x68k_sys_yield_block, &block, &error);
+  x68k_sys_interrupt_enable_raw(old_sr);
+  if (error) {
+    mrb_exc_raise(mrb, result);
+  }
+
+  return result;
+}
+
+static long
+x68k_iocs_arg_long(mrb_state *mrb, mrb_value value)
+{
+  if (mrb_string_p(value)) {
+    return (long)RSTRING_PTR(value);
+  }
+  if (mrb_nil_p(value)) {
+    return 0;
+  }
+  return (long)mrb_integer(value);
+}
+
+static mrb_value
+x68k_iocs_call(mrb_state *mrb, mrb_value self)
+{
+  mrb_value *values;
+  mrb_int argc;
+  long regs[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+  mrb_int rd = 0;
+  mrb_int ra = 0;
+  mrb_value result;
+  int i;
+
+  argc = mrb_get_args(mrb, "*", &values);
+  if (argc < 1 || argc > 10) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "wrong number of arguments");
+  }
+
+  for (i = 0; i < argc && i < 8; i++) {
+    regs[i] = x68k_iocs_arg_long(mrb, values[i]);
+  }
+  if (argc > 8) {
+    rd = mrb_integer(values[8]);
+  }
+  if (argc > 9) {
+    ra = mrb_integer(values[9]);
+  }
+  if (rd < 0 || rd > 5) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "rd must be 0..5");
+  }
+  if (ra < 0 || ra > 2) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "ra must be 0..2");
+  }
+
+  __asm__ volatile (
+    "moveml %0@, %%d0-%%d5/%%a1-%%a2\n"
+    "trap #15\n"
+    "moveml %%d0-%%d5/%%a1-%%a2, %0@\n"
+    : : "a"(regs)
+    : "d0", "d1", "d2", "d3", "d4", "d5", "a1", "a2", "cc", "memory"
+  );
+
+  if (rd + ra == 0) {
+    return mrb_fixnum_value((mrb_int)regs[0]);
+  }
+
+  result = mrb_ary_new_capa(mrb, (mrb_int)(1 + rd + ra));
+  mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)regs[0]));
+  for (i = 0; i < rd; i++) {
+    mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)regs[1 + i]));
+  }
+  for (i = 0; i < ra; i++) {
+    mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)regs[6 + i]));
+  }
+
+  return result;
+}
+
+__attribute__((interrupt))
+static void
+x68k_int_handle_vsync(void)
+{
+  x68k_int_vsync_count++;
+}
+
+__attribute__((interrupt))
+static void
+x68k_int_handle_raster(void)
+{
+  x68k_int_raster_count++;
+}
+
+__attribute__((interrupt))
+static void
+x68k_int_handle_timer_d(void)
+{
+  x68k_int_timer_d_count++;
+}
+
+__attribute__((interrupt))
+static void
+x68k_int_handle_opm(void)
+{
+  x68k_int_opm_count++;
+}
+
+static int
+x68k_iocs_vdispst_super(const void *addr, int disp, int cycle)
+{
+  int old_super = _iocs_b_super(0);
+  int result = _iocs_vdispst(addr, disp, cycle);
+  if (old_super > 0) _iocs_b_super(old_super);
+  return result;
+}
+
+static int
+x68k_iocs_crtcras_super(const void *addr, int raster)
+{
+  int old_super = _iocs_b_super(0);
+  int result = _iocs_crtcras(addr, raster);
+  if (old_super > 0) _iocs_b_super(old_super);
+  return result;
+}
+
+static int
+x68k_iocs_timerdst_super(const void *addr, int unit, int cycle)
+{
+  int old_super = _iocs_b_super(0);
+  int result = _iocs_timerdst(addr, unit, cycle);
+  if (old_super > 0) _iocs_b_super(old_super);
+  return result;
+}
+
+static mrb_value
+x68k_interrupt_vsync_enable(mrb_state *mrb, mrb_value self)
+{
+  mrb_bool disp = FALSE;
+  mrb_int cycle = 1;
+  int result;
+
+  mrb_get_args(mrb, "|bi", &disp, &cycle);
+  if (x68k_int_vsync_enabled) {
+    return mrb_fixnum_value(0);
+  }
+  x68k_int_vsync_count = 0;
+  result = x68k_iocs_vdispst_super(x68k_int_handle_vsync, disp ? 1 : 0, (int)cycle);
+  x68k_int_vsync_enabled = result >= 0;
+
+  return mrb_fixnum_value((mrb_int)result);
+}
+
+static mrb_value
+x68k_interrupt_vsync_disable(mrb_state *mrb, mrb_value self)
+{
+  int result = 0;
+
+  if (x68k_int_vsync_enabled) {
+    result = x68k_iocs_vdispst_super(0, 0, 0);
+  }
+  x68k_int_vsync_enabled = FALSE;
+  return mrb_fixnum_value((mrb_int)result);
+}
+
+static mrb_value
+x68k_interrupt_vsync_count(mrb_state *mrb, mrb_value self)
+{
+  return mrb_fixnum_value((mrb_int)x68k_int_vsync_count);
+}
+
+static mrb_value
+x68k_interrupt_vsync_clear(mrb_state *mrb, mrb_value self)
+{
+  x68k_int_vsync_count = 0;
+  return mrb_nil_value();
+}
+
+static mrb_value
+x68k_interrupt_vsync_p(mrb_state *mrb, mrb_value self)
+{
+  return x68k_int_vsync_count != 0 ? mrb_true_value() : mrb_false_value();
+}
+
+static mrb_value
+x68k_interrupt_raster_enable(mrb_state *mrb, mrb_value self)
+{
+  mrb_int raster;
+  int result;
+
+  mrb_get_args(mrb, "i", &raster);
+  if (x68k_int_raster_enabled) {
+    return mrb_fixnum_value(0);
+  }
+  x68k_int_raster_count = 0;
+  result = x68k_iocs_crtcras_super(x68k_int_handle_raster, (int)raster);
+  x68k_int_raster_enabled = result >= 0;
+
+  return mrb_fixnum_value((mrb_int)result);
+}
+
+static mrb_value
+x68k_interrupt_raster_disable(mrb_state *mrb, mrb_value self)
+{
+  int result = 0;
+
+  if (x68k_int_raster_enabled) {
+    result = x68k_iocs_crtcras_super(0, 0);
+  }
+  x68k_int_raster_enabled = FALSE;
+  return mrb_fixnum_value((mrb_int)result);
+}
+
+static mrb_value
+x68k_interrupt_raster_count(mrb_state *mrb, mrb_value self)
+{
+  return mrb_fixnum_value((mrb_int)x68k_int_raster_count);
+}
+
+static mrb_value
+x68k_interrupt_raster_clear(mrb_state *mrb, mrb_value self)
+{
+  x68k_int_raster_count = 0;
+  return mrb_nil_value();
+}
+
+static mrb_value
+x68k_interrupt_raster_p(mrb_state *mrb, mrb_value self)
+{
+  return x68k_int_raster_count != 0 ? mrb_true_value() : mrb_false_value();
+}
+
+static mrb_value
+x68k_interrupt_timer_d_enable(mrb_state *mrb, mrb_value self)
+{
+  return mrb_fixnum_value(-2);
+}
+
+static mrb_value
+x68k_interrupt_timer_d_disable(mrb_state *mrb, mrb_value self)
+{
+  x68k_int_timer_d_enabled = FALSE;
+  return mrb_fixnum_value(0);
+}
+
+static mrb_value
+x68k_interrupt_timer_d_count(mrb_state *mrb, mrb_value self)
+{
+  return mrb_fixnum_value((mrb_int)x68k_int_timer_d_count);
+}
+
+static mrb_value
+x68k_interrupt_timer_d_clear(mrb_state *mrb, mrb_value self)
+{
+  x68k_int_timer_d_count = 0;
+  return mrb_nil_value();
+}
+
+static mrb_value
+x68k_interrupt_timer_d_p(mrb_state *mrb, mrb_value self)
+{
+  return x68k_int_timer_d_count != 0 ? mrb_true_value() : mrb_false_value();
+}
+
+static mrb_value
+x68k_interrupt_opm_enable(mrb_state *mrb, mrb_value self)
+{
+  return mrb_fixnum_value(-2);
+}
+
+static mrb_value
+x68k_interrupt_opm_disable(mrb_state *mrb, mrb_value self)
+{
+  x68k_int_opm_enabled = FALSE;
+  return mrb_fixnum_value(0);
+}
+
+static mrb_value
+x68k_interrupt_opm_count(mrb_state *mrb, mrb_value self)
+{
+  return mrb_fixnum_value((mrb_int)x68k_int_opm_count);
+}
+
+static mrb_value
+x68k_interrupt_opm_clear(mrb_state *mrb, mrb_value self)
+{
+  x68k_int_opm_count = 0;
+  return mrb_nil_value();
+}
+
+static mrb_value
+x68k_interrupt_opm_p(mrb_state *mrb, mrb_value self)
+{
+  return x68k_int_opm_count != 0 ? mrb_true_value() : mrb_false_value();
+}
+
+static mrb_value
+x68k_interrupt_disable_all(mrb_state *mrb, mrb_value self)
+{
+  if (x68k_int_vsync_enabled) {
+    x68k_iocs_vdispst_super(0, 0, 0);
+  }
+  if (x68k_int_raster_enabled) {
+    x68k_iocs_crtcras_super(0, 0);
+  }
+  x68k_int_vsync_enabled = FALSE;
+  x68k_int_raster_enabled = FALSE;
+  x68k_int_timer_d_enabled = FALSE;
+  x68k_int_opm_enabled = FALSE;
+  return mrb_nil_value();
 }
 
 static mrb_value
@@ -1245,10 +2406,14 @@ mrb_mruby_x68k_stdio_gem_init(mrb_state *mrb)
   struct RClass *screen;
   struct RClass *text;
   struct RClass *key;
+  struct RClass *crtc;
   struct RClass *joy;
   struct RClass *bg;
   struct RClass *sys;
   struct RClass *sprite;
+  struct RClass *zmusic;
+  struct RClass *iocs;
+  struct RClass *interrupt;
 
   mrb_define_method(mrb, mrb->kernel_module, "puts", x68k_kernel_puts, MRB_ARGS_ANY());
   mrb_define_method(mrb, mrb->kernel_module, "printf", x68k_kernel_printf, MRB_ARGS_ANY());
@@ -1312,6 +2477,11 @@ mrb_mruby_x68k_stdio_gem_init(mrb_state *mrb)
   mrb_define_class_method(mrb, key, "input", x68k_key_input, MRB_ARGS_NONE());
   mrb_define_class_method(mrb, key, "bit", x68k_key_bit, MRB_ARGS_REQ(1));
 
+  crtc = mrb_define_module_under(mrb, x68k, "Crtc");
+  mrb_define_class_method(mrb, crtc, "vdisp?", x68k_crtc_vdisp, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, crtc, "vblank?", x68k_crtc_vblank, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, crtc, "wait_vblank", x68k_crtc_wait_vblank, MRB_ARGS_NONE());
+
   joy = mrb_define_module_under(mrb, x68k, "Joy");
   mrb_define_class_method(mrb, joy, "get", x68k_joy_get, MRB_ARGS_OPT(1));
   mrb_define_class_method(mrb, joy, "raw", x68k_joy_get, MRB_ARGS_OPT(1));
@@ -1331,8 +2501,51 @@ mrb_mruby_x68k_stdio_gem_init(mrb_state *mrb)
   mrb_define_class_method(mrb, bg, "on", x68k_bg_on, MRB_ARGS_NONE());
   mrb_define_class_method(mrb, bg, "off", x68k_bg_off, MRB_ARGS_NONE());
 
+  zmusic = mrb_define_module_under(mrb, x68k, "ZMusic");
+  mrb_define_class_method(mrb, zmusic, "available?", x68k_zmusic_available, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, zmusic, "version", x68k_zmusic_version, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, zmusic, "play_bgm", x68k_zmusic_play_bgm, MRB_ARGS_ARG(1, 2));
+  mrb_define_class_method(mrb, zmusic, "stop", x68k_zmusic_stop, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, zmusic, "fadeout", x68k_zmusic_fadeout, MRB_ARGS_REQ(1));
+  mrb_define_class_method(mrb, zmusic, "status", x68k_zmusic_status, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, zmusic, "pcm8?", x68k_zmusic_pcm8, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, zmusic, "play_se", x68k_zmusic_play_se, MRB_ARGS_ARG(2, 2));
+  mrb_define_class_method(mrb, zmusic, "play_adpcm", x68k_zmusic_play_adpcm, MRB_ARGS_ARG(1, 4));
+  mrb_define_class_method(mrb, zmusic, "play_adpcm_note", x68k_zmusic_play_adpcm_note, MRB_ARGS_ARG(1, 3));
   sys = mrb_define_module_under(mrb, x68k, "Sys");
   mrb_define_class_method(mrb, sys, "wait", x68k_sys_wait, MRB_ARGS_REQ(1));
+  mrb_define_class_method(mrb, sys, "super?", x68k_sys_super_p, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, sys, "super", x68k_sys_super, MRB_ARGS_OPT(1));
+  mrb_define_class_method(mrb, sys, "with_super", x68k_sys_with_super, MRB_ARGS_BLOCK());
+  mrb_define_class_method(mrb, sys, "interrupt_disable", x68k_sys_interrupt_disable, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, sys, "interrupt_enable", x68k_sys_interrupt_enable, MRB_ARGS_REQ(1));
+  mrb_define_class_method(mrb, sys, "with_interrupt_disabled", x68k_sys_with_interrupt_disabled, MRB_ARGS_BLOCK());
+
+  iocs = mrb_define_module_under(mrb, x68k, "Iocs");
+  mrb_define_class_method(mrb, iocs, "call", x68k_iocs_call, MRB_ARGS_ANY());
+
+  interrupt = mrb_define_module_under(mrb, x68k, "Interrupt");
+  mrb_define_class_method(mrb, interrupt, "vsync_enable", x68k_interrupt_vsync_enable, MRB_ARGS_ARG(0, 2));
+  mrb_define_class_method(mrb, interrupt, "vsync_disable", x68k_interrupt_vsync_disable, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, interrupt, "vsync_count", x68k_interrupt_vsync_count, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, interrupt, "vsync_clear", x68k_interrupt_vsync_clear, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, interrupt, "vsync?", x68k_interrupt_vsync_p, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, interrupt, "raster_enable", x68k_interrupt_raster_enable, MRB_ARGS_REQ(1));
+  mrb_define_class_method(mrb, interrupt, "raster_disable", x68k_interrupt_raster_disable, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, interrupt, "raster_count", x68k_interrupt_raster_count, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, interrupt, "raster_clear", x68k_interrupt_raster_clear, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, interrupt, "raster?", x68k_interrupt_raster_p, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, interrupt, "timer_d_enable", x68k_interrupt_timer_d_enable, MRB_ARGS_ARG(0, 2));
+  mrb_define_class_method(mrb, interrupt, "timer_d_disable", x68k_interrupt_timer_d_disable, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, interrupt, "timer_d_count", x68k_interrupt_timer_d_count, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, interrupt, "timer_d_clear", x68k_interrupt_timer_d_clear, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, interrupt, "timer_d?", x68k_interrupt_timer_d_p, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, interrupt, "opm_enable", x68k_interrupt_opm_enable, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, interrupt, "opm_disable", x68k_interrupt_opm_disable, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, interrupt, "opm_count", x68k_interrupt_opm_count, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, interrupt, "opm_clear", x68k_interrupt_opm_clear, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, interrupt, "opm?", x68k_interrupt_opm_p, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, interrupt, "disable_all", x68k_interrupt_disable_all, MRB_ARGS_NONE());
 
   sprite = mrb_define_module_under(mrb, x68k, "Sprite");
   mrb_define_class_method(mrb, sprite, "init", x68k_sprite_init, MRB_ARGS_NONE());

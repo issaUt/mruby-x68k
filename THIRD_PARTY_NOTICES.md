@@ -42,3 +42,9 @@ includes toolchain output or runtime objects, review the corresponding
 ## mruby/c
 
 mruby/c is not included in this repository at this stage.
+
+## Sample Z-MUSIC Assets
+
+The files under `samples/ZMD/` are small sample assets prepared for this
+repository's examples. They are included so the Z-MUSIC samples and
+`maze_chase.rb` can run with sound immediately after checkout.
