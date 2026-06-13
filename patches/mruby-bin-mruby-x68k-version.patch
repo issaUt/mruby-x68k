@@ -2,11 +2,11 @@
 +++ b/mrbgems/mruby-bin-mruby/tools/mruby/mruby.c
 @@ -42,6 +42,13 @@
  };
- 
+
  static void
 +x68k_show_version(void)
 +{
-+  printf("mruby-x68k 0.1.0\n");
++  printf("mruby-x68k 0.2.0\n");
 +  printf("target: X68000 / Human68k\n");
 +}
 +
