@@ -68,7 +68,7 @@ EAT_SE_SLOT = 0
 CHARGE_SE_SLOT = 1
 MISS_SE_SLOT = 2
 
-input_mode = INPUT_JOY
+input_mode = INPUT_KEY
 ghost_count = 4
 clear_test = false
 audio_requested = true

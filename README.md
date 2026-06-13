@@ -77,14 +77,17 @@ samples/ZMD/snare.pcm       ADPCMテスト用
 実行例:
 
 ```text
-mruby maze_chase.rb joy 4
-mruby maze_chase.rb key 2
+mruby maze_chase.rb
+mruby maze_chase.rb joy
+mruby maze_chase.rb 2
 mruby maze_chase.rb wait=2
 mruby maze_chase.rb speed=30
 mruby maze_chase.rb noaudio
 mruby maze_chase.rb clear
 ```
 
+無指定時はキーボード操作、敵4体で起動します。
+`joy` / `joystick` を指定するとジョイスティック操作になります。
 `clear` はクリア表示確認用のテストモードです。
 `wait=N` はゲームループごとに待つVBlank数です。高速な実機では `wait=2` などで速度を落とせます。
 `speed=30` は `wait=2` 相当の指定です。
