@@ -1,8 +1,9 @@
 # Third Party Notices
 
-This repository is intended to contain only the X68000-specific mruby helper
-gem, samples, and documentation. It does not bundle mruby, mruby/c, xdev68k,
-elf2x68k, GCC, newlib, or emulator binaries.
+This repository contains the X68000-specific mruby helper gem, samples,
+documentation, and bundled third-party headers used by the helper gem. It
+does not bundle mruby, mruby/c, xdev68k, elf2x68k, GCC, newlib, or emulator
+binaries.
 
 ## mruby
 
@@ -13,6 +14,23 @@ mruby is licensed under the MIT License.
 
 If distributing a binary built from mruby, include mruby's copyright notice and
 license text with the binary distribution.
+
+## libzm2
+
+The Z-MUSIC wrapper code uses libzm2, a header-only C library for Z-MUSIC v2
+function calls.
+
+- Project: https://github.com/kg68k/libzm2
+- Author: TcbnErik / kg68k
+- Bundled files: `third_party/libzm2/include/`
+- License: GNU GPLv3 or later, with the GCC Runtime Library Exception 3.1
+- License texts: `third_party/libzm2/COPYING`,
+  `third_party/libzm2/COPYING.RUNTIME`
+
+The upstream README states that executable files created using this library
+are not subject to distribution restrictions from libzm2. The libzm2 author
+also confirmed that mruby-x68k may use libzm2 and distribute binaries built
+with it.
 
 ## elf2x68k
 

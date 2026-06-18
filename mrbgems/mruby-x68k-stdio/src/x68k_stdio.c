@@ -10,6 +10,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef nullptr
+#define nullptr NULL
+#endif
+#include "libzm2.h"
+#include "libzm2util.h"
+
 typedef struct {
   FILE *fp;
 } x68k_file;
@@ -34,7 +40,6 @@ static unsigned char *x68k_zmusic_buffer = NULL;
 static size_t x68k_zmusic_buffer_size = 0;
 static unsigned char *x68k_zmusic_se_buffers[X68K_ZMUSIC_SE_SLOTS];
 static size_t x68k_zmusic_se_buffer_sizes[X68K_ZMUSIC_SE_SLOTS];
-static long x68k_zmusic_se_table_offsets[X68K_ZMUSIC_SE_SLOTS];
 static int x68k_zmusic_se_volumes[X68K_ZMUSIC_SE_SLOTS];
 static char x68k_zmusic_se_paths[X68K_ZMUSIC_SE_SLOTS][96];
 static unsigned char *x68k_zmusic_adpcm_buffers[X68K_ZMUSIC_ADPCM_SLOTS];
@@ -94,100 +99,6 @@ x68k_zmusic_version_raw(void)
   return ((int)sig[6] << 8) | (int)sig[7];
 }
 
-static int
-x68k_zmusic_call_d2(int func, long d2)
-{
-  register long reg_d0 __asm__("d0");
-  register long reg_d1 __asm__("d1") = func;
-  register long reg_d2 __asm__("d2") = d2;
-
-  __asm__ volatile (
-    "trap #3"
-    : "=d"(reg_d0)
-    : "d"(reg_d1), "d"(reg_d2)
-    : "d3", "d4", "d5", "d6", "d7", "a0", "a1", "a2", "a3", "a4", "a5", "cc", "memory"
-  );
-
-  return (int)reg_d0;
-}
-
-static int
-x68k_zmusic_call_tracks(int func, long d2, long d3, long d4)
-{
-  register long reg_d0 __asm__("d0");
-  register long reg_d1 __asm__("d1") = func;
-  register long reg_d2 __asm__("d2") = d2;
-  register long reg_d3 __asm__("d3") = d3;
-  register long reg_d4 __asm__("d4") = d4;
-
-  __asm__ volatile (
-    "trap #3"
-    : "=d"(reg_d0)
-    : "d"(reg_d1), "d"(reg_d2), "d"(reg_d3), "d"(reg_d4)
-    : "d5", "d6", "d7", "a0", "a1", "a2", "a3", "a4", "a5", "cc", "memory"
-  );
-
-  return (int)reg_d0;
-}
-
-static int
-x68k_zmusic_call_a1_d2(int func, const void *a1, long d2)
-{
-  register long reg_d0 __asm__("d0");
-  register long reg_d1 __asm__("d1") = func;
-  register long reg_d2 __asm__("d2") = d2;
-  register const void *reg_a1 __asm__("a1") = a1;
-
-  __asm__ volatile (
-    "trap #3"
-    : "=d"(reg_d0)
-    : "d"(reg_d1), "d"(reg_d2), "a"(reg_a1)
-    : "d3", "d4", "d5", "d6", "d7", "a0", "a2", "a3", "a4", "a5", "cc", "memory"
-  );
-
-  return (int)reg_d0;
-}
-
-static int
-x68k_zmusic_call_a1_d2_d3(int func, const void *a1, long d2, long d3)
-{
-  register long reg_d0 __asm__("d0");
-  register long reg_d1 __asm__("d1") = func;
-  register long reg_d2 __asm__("d2") = d2;
-  register long reg_d3 __asm__("d3") = d3;
-  register const void *reg_a1 __asm__("a1") = a1;
-
-  __asm__ volatile (
-    "trap #3"
-    : "=d"(reg_d0)
-    : "d"(reg_d1), "d"(reg_d2), "d"(reg_d3), "a"(reg_a1)
-    : "d4", "d5", "d6", "d7", "a0", "a2", "a3", "a4", "a5", "cc", "memory"
-  );
-
-  return (int)reg_d0;
-}
-
-static int
-x68k_zmusic_call_d2_d3(int func, long d2, long d3)
-{
-  return x68k_zmusic_call_tracks(func, d2, d3, 0);
-}
-
-static void*
-x68k_zmusic_call_a0(int func)
-{
-  register long reg_d1 __asm__("d1") = func;
-  register void *reg_a0 __asm__("a0");
-
-  __asm__ volatile (
-    "trap #3"
-    : "=a"(reg_a0)
-    : "d"(reg_d1)
-    : "d0", "d2", "d3", "d4", "d5", "d6", "d7", "a1", "a2", "a3", "a4", "a5", "cc", "memory"
-  );
-
-  return reg_a0;
-}
 static void
 x68k_zmusic_free_buffer(mrb_state *mrb)
 {
@@ -543,7 +454,6 @@ x68k_zmusic_free_se_buffer(mrb_state *mrb, int slot)
     mrb_free(mrb, x68k_zmusic_se_buffers[slot]);
     x68k_zmusic_se_buffers[slot] = NULL;
     x68k_zmusic_se_buffer_sizes[slot] = 0;
-    x68k_zmusic_se_table_offsets[slot] = 0;
     x68k_zmusic_se_volumes[slot] = -1;
     x68k_zmusic_se_paths[slot][0] = '\0';
   }
@@ -594,107 +504,6 @@ x68k_zmusic_load_file(mrb_state *mrb, const char *path, size_t *size_out)
 
   *size_out = (size_t)file_size;
   return buffer;
-}
-
-static int
-x68k_zmusic_zmd_strlen(const unsigned char *p, const unsigned char *end)
-{
-  const unsigned char *start = p;
-
-  while (p < end) {
-    if (*p++ == 0) {
-      return (int)(p - start);
-    }
-  }
-
-  return -1;
-}
-
-static int
-x68k_zmusic_zmd_word(const unsigned char *p, const unsigned char *end)
-{
-  if (p + 2 > end) {
-    return -1;
-  }
-
-  return ((int)p[0] << 8) | (int)p[1];
-}
-
-static long
-x68k_zmusic_zmd_track_table_offset(const unsigned char *buffer, size_t size)
-{
-  const unsigned char *p = buffer + 8;
-  const unsigned char *end = buffer + size;
-
-  while (p < end) {
-    int n;
-
-    switch (*p++) {
-    case 0xff:
-      if (((p - buffer) & 1) != 0) {
-        if (p >= end || *p != 0xff) {
-          return -1;
-        }
-        p++;
-      }
-      return (long)(p - buffer);
-    case 0x04:
-    case 0x1b:
-      p += 56;
-      break;
-    case 0x05:
-      p += 2;
-      break;
-    case 0x15:
-      p += 1;
-      break;
-    case 0x18:
-      n = x68k_zmusic_zmd_word(p, end);
-      if (n < 0) return -1;
-      p += 2 + n;
-      break;
-    case 0x40:
-      p += 19;
-      n = x68k_zmusic_zmd_word(p, end);
-      if (n < 0) return -1;
-      if ((n >> 8) == 0) {
-        p += 4;
-      }
-      else {
-        n = x68k_zmusic_zmd_strlen(p, end);
-        if (n < 0) return -1;
-        p += n;
-      }
-      break;
-    case 0x42:
-      p += 5;
-      break;
-    case 0x4a:
-      n = x68k_zmusic_zmd_word(p, end);
-      if (n < 0) return -1;
-      p += 6 + n * 2;
-      break;
-    case 0x60:
-    case 0x61:
-    case 0x62:
-    case 0x63:
-    case 0x7f:
-      n = x68k_zmusic_zmd_strlen(p, end);
-      if (n < 0) return -1;
-      p += n;
-      break;
-    case 0x7e:
-      break;
-    default:
-      return -1;
-    }
-
-    if (p > end) {
-      return -1;
-    }
-  }
-
-  return -1;
 }
 
 static unsigned char*
@@ -786,7 +595,7 @@ x68k_zmusic_stop(mrb_state *mrb, mrb_value self)
     return mrb_fixnum_value(-1);
   }
 
-  result = x68k_zmusic_call_tracks(0x0a, 0, 0, 0);
+  result = zm2_m_stop_all();
 
   return mrb_fixnum_value(result);
 }
@@ -801,7 +610,7 @@ x68k_zmusic_fadeout(mrb_state *mrb, mrb_value self)
     return mrb_fixnum_value(-1);
   }
 
-  return mrb_fixnum_value(x68k_zmusic_call_d2(0x1a, (long)speed));
+  return mrb_fixnum_value(zm2_fade_out((int32_t)speed));
 }
 
 static mrb_value
@@ -821,15 +630,19 @@ x68k_zmusic_play_bgm(mrb_state *mrb, mrb_value self)
 
   buffer = x68k_zmusic_load_zmd(mrb, path, &size);
 
-  x68k_zmusic_call_tracks(0x0a, 0, 0, 0);
+  zm2_m_stop_all();
   x68k_zmusic_free_buffer(mrb);
   x68k_zmusic_free_se_buffers(mrb);
   x68k_zmusic_buffer = buffer;
   x68k_zmusic_buffer_size = size;
   x68k_zmusic_scale_zmd_volume(mrb, x68k_zmusic_buffer, x68k_zmusic_buffer_size, volume);
 
-  result = x68k_zmusic_call_a1_d2(0x11, x68k_zmusic_buffer + 7,
-                                  fast ? 0 : (long)(x68k_zmusic_buffer_size - 8));
+  if (fast) {
+    result = zm2_play_cnv_data_fast(x68k_zmusic_buffer + 7);
+  }
+  else {
+    result = zm2_play_cnv_data((uint32_t)(x68k_zmusic_buffer_size - 7), x68k_zmusic_buffer + 7);
+  }
   if (result != 0) {
     x68k_zmusic_free_buffer(mrb);
   }
@@ -848,7 +661,7 @@ x68k_zmusic_status(mrb_state *mrb, mrb_value self)
     return mrb_nil_value();
   }
 
-  status = (unsigned char*)x68k_zmusic_call_a0(0x50);
+  status = (unsigned char*)zm2_zm_status();
   if (status == NULL) {
     return mrb_nil_value();
   }
@@ -875,7 +688,7 @@ x68k_zmusic_pcm8(mrb_state *mrb, mrb_value self)
     return mrb_false_value();
   }
 
-  status = (unsigned char*)x68k_zmusic_call_a0(0x50);
+  status = (unsigned char*)zm2_zm_status();
   if (status == NULL) {
     return mrb_false_value();
   }
@@ -892,7 +705,7 @@ x68k_zmusic_play_se(mrb_state *mrb, mrb_value self)
   mrb_int volume = 100;
   unsigned char *buffer;
   size_t size;
-  long table_offset;
+  int32_t table_offset;
   int reload;
 
   mrb_get_args(mrb, "iz|ii", &track, &path, &volume, &slot);
@@ -911,25 +724,26 @@ x68k_zmusic_play_se(mrb_state *mrb, mrb_value self)
            strcmp(x68k_zmusic_se_paths[slot], path) != 0;
   if (reload) {
     buffer = x68k_zmusic_load_zmd(mrb, path, &size);
-    table_offset = x68k_zmusic_zmd_track_table_offset(buffer, size);
+    table_offset = zm2_get_zmd_common_size(buffer, size);
     if (table_offset < 0) {
       mrb_free(mrb, buffer);
-      mrb_raise(mrb, E_ARGUMENT_ERROR, "unsupported ZMD common commands");
+      mrb_raise(mrb, E_ARGUMENT_ERROR, "unsupported ZMD data");
     }
 
     x68k_zmusic_free_se_buffer(mrb, (int)slot);
     x68k_zmusic_se_buffers[slot] = buffer;
     x68k_zmusic_se_buffer_sizes[slot] = size;
-    x68k_zmusic_se_table_offsets[slot] = table_offset;
     x68k_zmusic_se_volumes[slot] = (int)volume;
     strncpy(x68k_zmusic_se_paths[slot], path, sizeof(x68k_zmusic_se_paths[slot]) - 1);
     x68k_zmusic_se_paths[slot][sizeof(x68k_zmusic_se_paths[slot]) - 1] = '\0';
     x68k_zmusic_scale_zmd_volume(mrb, x68k_zmusic_se_buffers[slot], x68k_zmusic_se_buffer_sizes[slot], volume);
   }
 
-  table_offset = x68k_zmusic_se_table_offsets[slot];
-
-  x68k_zmusic_call_a1_d2(0x12, x68k_zmusic_se_buffers[slot] + table_offset, (long)track);
+  table_offset = zm2_get_zmd_common_size(x68k_zmusic_se_buffers[slot], x68k_zmusic_se_buffer_sizes[slot]);
+  if (table_offset < 0) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "unsupported ZMD data");
+  }
+  zm2_se_play((uint32_t)track, x68k_zmusic_se_buffers[slot] + table_offset);
 
   return mrb_fixnum_value(0);
 }
@@ -944,7 +758,6 @@ x68k_zmusic_play_adpcm(mrb_state *mrb, mrb_value self)
   mrb_int slot = 0;
   unsigned char *buffer;
   size_t size;
-  long param;
   int result;
 
   mrb_get_args(mrb, "z|iiii", &path, &pan, &frq, &priority, &slot);
@@ -955,17 +768,17 @@ x68k_zmusic_play_adpcm(mrb_state *mrb, mrb_value self)
     mrb_raise(mrb, E_ARGUMENT_ERROR, "slot must be 0..3");
   }
 
-  param = x68k_zmusic_adpcm_param(mrb, pan, frq, priority);
+  x68k_zmusic_adpcm_param(mrb, pan, frq, priority);
   buffer = x68k_zmusic_load_file(mrb, path, &size);
 
   x68k_zmusic_free_adpcm_buffer(mrb, (int)slot);
   x68k_zmusic_adpcm_buffers[slot] = buffer;
   x68k_zmusic_adpcm_buffer_sizes[slot] = size;
 
-  result = x68k_zmusic_call_a1_d2_d3(0x13,
-                                     x68k_zmusic_adpcm_buffers[slot],
-                                     (long)x68k_zmusic_adpcm_buffer_sizes[slot],
-                                     param);
+  zm2_se_adpcm1((uint32_t)x68k_zmusic_adpcm_buffer_sizes[slot],
+                (uint8_t)priority, (uint8_t)frq, (uint8_t)pan,
+                x68k_zmusic_adpcm_buffers[slot]);
+  result = 0;
 
   return mrb_fixnum_value(result);
 }
@@ -977,7 +790,6 @@ x68k_zmusic_play_adpcm_note(mrb_state *mrb, mrb_value self)
   mrb_int pan = 3;
   mrb_int frq = 4;
   mrb_int priority = 0;
-  long param;
   int result;
 
   mrb_get_args(mrb, "i|iii", &note, &pan, &frq, &priority);
@@ -988,8 +800,9 @@ x68k_zmusic_play_adpcm_note(mrb_state *mrb, mrb_value self)
     mrb_raise(mrb, E_ARGUMENT_ERROR, "note must be 0..511");
   }
 
-  param = x68k_zmusic_adpcm_param(mrb, pan, frq, priority);
-  result = x68k_zmusic_call_d2_d3(0x14, (long)note, param);
+  x68k_zmusic_adpcm_param(mrb, pan, frq, priority);
+  zm2_se_adpcm2((uint32_t)note, (uint8_t)priority, (uint8_t)frq, (uint8_t)pan);
+  result = 0;
 
   return mrb_fixnum_value(result);
 }
