@@ -6,7 +6,7 @@
  static void
 +x68k_show_version(void)
 +{
-+  printf("mruby-x68k 0.2.0\n");
++  printf("mruby-x68k 0.3.0\n");
 +  printf("target: X68000 / Human68k\n");
 +}
 +
