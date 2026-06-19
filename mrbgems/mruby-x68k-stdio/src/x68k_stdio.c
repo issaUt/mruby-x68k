@@ -33,6 +33,11 @@ static mrb_bool x68k_int_raster_enabled = FALSE;
 static mrb_bool x68k_int_timer_d_enabled = FALSE;
 static mrb_bool x68k_int_opm_enabled = FALSE;
 
+#define X68K_JOY_PORT1_ADDR 0x00e9a001
+#define X68K_JOY_PORT2_ADDR 0x00e9a003
+#define X68K_JOY_CTRL_ADDR  0x00e9a005
+#define X68K_JOY_BSR_ADDR   0x00e9a007
+
 #define X68K_ZMUSIC_SE_SLOTS 4
 #define X68K_ZMUSIC_ADPCM_SLOTS 4
 
@@ -1654,14 +1659,32 @@ x68k_interrupt_raster_p(mrb_state *mrb, mrb_value self)
 static mrb_value
 x68k_interrupt_timer_d_enable(mrb_state *mrb, mrb_value self)
 {
-  return mrb_fixnum_value(-2);
+  mrb_int unit = 7;
+  mrb_int cycle = 200;
+  int result;
+
+  mrb_get_args(mrb, "|ii", &unit, &cycle);
+  if (x68k_int_timer_d_enabled) {
+    return mrb_fixnum_value(0);
+  }
+  x68k_int_timer_d_count = 0;
+  x68k_iocs_timerdst_super(0, 0, 0);
+  result = x68k_iocs_timerdst_super(x68k_int_handle_timer_d, (int)unit, (int)cycle);
+  x68k_int_timer_d_enabled = result >= 0;
+
+  return mrb_fixnum_value((mrb_int)result);
 }
 
 static mrb_value
 x68k_interrupt_timer_d_disable(mrb_state *mrb, mrb_value self)
 {
+  int result = 0;
+
+  if (x68k_int_timer_d_enabled) {
+    result = x68k_iocs_timerdst_super(0, 0, 0);
+  }
   x68k_int_timer_d_enabled = FALSE;
-  return mrb_fixnum_value(0);
+  return mrb_fixnum_value((mrb_int)result);
 }
 
 static mrb_value
@@ -1724,6 +1747,9 @@ x68k_interrupt_disable_all(mrb_state *mrb, mrb_value self)
   if (x68k_int_raster_enabled) {
     x68k_iocs_crtcras_super(0, 0);
   }
+  if (x68k_int_timer_d_enabled) {
+    x68k_iocs_timerdst_super(0, 0, 0);
+  }
   x68k_int_vsync_enabled = FALSE;
   x68k_int_raster_enabled = FALSE;
   x68k_int_timer_d_enabled = FALSE;
@@ -1751,6 +1777,237 @@ x68k_joy_get(mrb_state *mrb, mrb_value self)
 
   mrb_get_args(mrb, "|i", &port);
   return mrb_fixnum_value(_iocs_joyget((int)port));
+}
+
+
+static volatile unsigned char*
+x68k_joy_port_addr(int port)
+{
+  return (volatile unsigned char *)(port == 1 ? X68K_JOY_PORT2_ADDR : X68K_JOY_PORT1_ADDR);
+}
+
+static void
+x68k_joy_delay(mrb_int count)
+{
+  volatile mrb_int i;
+
+  for (i = 0; i < count; i++) {
+  }
+}
+
+static unsigned char
+x68k_joy_read_port_super(int port)
+{
+  volatile unsigned char *joy_port = x68k_joy_port_addr(port);
+  int old_super = _iocs_b_super(0);
+  unsigned char value = *joy_port;
+
+  if (old_super > 0) {
+    _iocs_b_super(old_super);
+  }
+
+  return value;
+}
+
+static unsigned char
+x68k_joy_read_control_super(void)
+{
+  volatile unsigned char *ctrl = (volatile unsigned char *)X68K_JOY_CTRL_ADDR;
+  int old_super = _iocs_b_super(0);
+  unsigned char value = *ctrl;
+
+  if (old_super > 0) {
+    _iocs_b_super(old_super);
+  }
+
+  return value;
+}
+
+static void
+x68k_joy_set_control_bit(int bit, int value)
+{
+  volatile unsigned char *bsr = (volatile unsigned char *)X68K_JOY_BSR_ADDR;
+  int old_super = _iocs_b_super(0);
+
+  *bsr = (unsigned char)(((bit & 7) << 1) | (value ? 1 : 0));
+  if (old_super > 0) {
+    _iocs_b_super(old_super);
+  }
+}
+
+static mrb_value
+x68k_joy_direct_raw(mrb_state *mrb, mrb_value self)
+{
+  mrb_int port = 0;
+
+  mrb_get_args(mrb, "|i", &port);
+  return mrb_fixnum_value((mrb_int)x68k_joy_read_port_super((int)port));
+}
+
+static mrb_value
+x68k_joy_control(mrb_state *mrb, mrb_value self)
+{
+  return mrb_fixnum_value((mrb_int)x68k_joy_read_control_super());
+}
+
+static mrb_value
+x68k_joy_control_bit(mrb_state *mrb, mrb_value self)
+{
+  mrb_int bit;
+  mrb_bool value;
+
+  mrb_get_args(mrb, "ib", &bit, &value);
+  if (bit < 0 || bit > 7) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "bit must be 0..7");
+  }
+  x68k_joy_set_control_bit((int)bit, value ? 1 : 0);
+
+  return x68k_joy_control(mrb, self);
+}
+
+#define X68K_JOY_BTN_UP     (1 << 0)
+#define X68K_JOY_BTN_DOWN   (1 << 1)
+#define X68K_JOY_BTN_LEFT   (1 << 2)
+#define X68K_JOY_BTN_RIGHT  (1 << 3)
+#define X68K_JOY_BTN_A      (1 << 4)
+#define X68K_JOY_BTN_B      (1 << 5)
+#define X68K_JOY_BTN_C      (1 << 6)
+#define X68K_JOY_BTN_X      (1 << 7)
+#define X68K_JOY_BTN_Y      (1 << 8)
+#define X68K_JOY_BTN_Z      (1 << 9)
+#define X68K_JOY_BTN_START  (1 << 10)
+#define X68K_JOY_BTN_MODE   (1 << 11)
+#define X68K_JOY_DETECTED_6B (1 << 15)
+
+static int
+x68k_joy_default_sel_bit(int port)
+{
+  return port == 1 ? 5 : 4;
+}
+
+static void
+x68k_joy_read_sega_sequence(int port, int sel_bit, mrb_int wait_count, unsigned char values[10])
+{
+  volatile unsigned char *joy_port = x68k_joy_port_addr(port);
+  int i;
+  int old_super = _iocs_b_super(0);
+
+  *(volatile unsigned char *)X68K_JOY_BSR_ADDR = 8;   /* PC4 low */
+  *(volatile unsigned char *)X68K_JOY_BSR_ADDR = 10;  /* PC5 low */
+  *(volatile unsigned char *)X68K_JOY_BSR_ADDR = 12;  /* PC6 low */
+  *(volatile unsigned char *)X68K_JOY_BSR_ADDR = 14;  /* PC7 low */
+
+  for (i = 0; i < 10; i++) {
+    *(volatile unsigned char *)X68K_JOY_BSR_ADDR = (unsigned char)(((sel_bit & 7) << 1) | ((i & 1) == 0 ? 1 : 0));
+    x68k_joy_delay(wait_count);
+    values[i] = *joy_port;
+  }
+  *(volatile unsigned char *)X68K_JOY_BSR_ADDR = (unsigned char)((sel_bit & 7) << 1);
+
+  if (old_super > 0) {
+    _iocs_b_super(old_super);
+  }
+}
+
+static int
+x68k_joy_bit_down(unsigned char value, int bit)
+{
+  return (value & (1 << bit)) == 0;
+}
+
+static unsigned long
+x68k_joy_decode_sega6b(const unsigned char values[10], int map)
+{
+  unsigned char base_h = values[0];
+  unsigned char base_l = values[1];
+  unsigned char marker = values[3];
+  unsigned char ext_h = values[4];
+  unsigned long mask = 0;
+
+  (void)map;
+
+  if (x68k_joy_bit_down(base_h, 0)) mask |= X68K_JOY_BTN_UP;
+  if (x68k_joy_bit_down(base_h, 1)) mask |= X68K_JOY_BTN_DOWN;
+  if (x68k_joy_bit_down(base_h, 2)) mask |= X68K_JOY_BTN_LEFT;
+  if (x68k_joy_bit_down(base_h, 3)) mask |= X68K_JOY_BTN_RIGHT;
+
+  if ((marker & 0x0f) == 0) {
+    mask |= X68K_JOY_DETECTED_6B;
+  }
+
+  if (map == 1) {
+    /*
+     * Alternate mapping kept for emulator/USB adapter configurations observed
+     * during testing.
+     */
+    if (x68k_joy_bit_down(base_h, 6)) mask |= X68K_JOY_BTN_A;
+    if (x68k_joy_bit_down(base_h, 5)) mask |= X68K_JOY_BTN_B;
+    if (x68k_joy_bit_down(ext_h, 0)) mask |= X68K_JOY_BTN_C;
+    if (x68k_joy_bit_down(ext_h, 2)) mask |= X68K_JOY_BTN_X;
+    if (x68k_joy_bit_down(base_l, 5)) mask |= X68K_JOY_BTN_Y;
+    if (x68k_joy_bit_down(ext_h, 1)) mask |= X68K_JOY_BTN_Z;
+  }
+  else {
+    /*
+     * X68000 adapter mapping confirmed on hardware:
+     * A=base_l bit5, B=base_h bit5, C=base_h bit6,
+     * X=ext_h bit2, Y=ext_h bit1, Z=ext_h bit0, Start=base_l bit6.
+     */
+    if (x68k_joy_bit_down(base_l, 5)) mask |= X68K_JOY_BTN_A;
+    if (x68k_joy_bit_down(base_h, 5)) mask |= X68K_JOY_BTN_B;
+    if (x68k_joy_bit_down(base_h, 6)) mask |= X68K_JOY_BTN_C;
+    if (x68k_joy_bit_down(ext_h, 2)) mask |= X68K_JOY_BTN_X;
+    if (x68k_joy_bit_down(ext_h, 1)) mask |= X68K_JOY_BTN_Y;
+    if (x68k_joy_bit_down(ext_h, 0)) mask |= X68K_JOY_BTN_Z;
+  }
+  if (x68k_joy_bit_down(base_l, 6)) mask |= X68K_JOY_BTN_START;
+  if (x68k_joy_bit_down(ext_h, 3)) mask |= X68K_JOY_BTN_MODE;
+
+  return mask;
+}
+
+static mrb_value
+x68k_joy_sega6b_raw(mrb_state *mrb, mrb_value self)
+{
+  mrb_int port = 0;
+  mrb_int wait_count = 80;
+  mrb_int sel_bit = -1;
+  unsigned char values[10];
+  mrb_value result;
+  int i;
+
+  mrb_get_args(mrb, "|iii", &port, &wait_count, &sel_bit);
+  if (sel_bit < 0) {
+    sel_bit = x68k_joy_default_sel_bit((int)port);
+  }
+  if (sel_bit > 7) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "sel_bit must be 0..7");
+  }
+
+  x68k_joy_read_sega_sequence((int)port, (int)sel_bit, wait_count, values);
+
+  result = mrb_ary_new_capa(mrb, 10);
+  for (i = 0; i < 10; i++) {
+    mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)values[i]));
+  }
+
+  return result;
+}
+
+static mrb_value
+x68k_joy_sega6b(mrb_state *mrb, mrb_value self)
+{
+  mrb_int port = 0;
+  mrb_int map = 0;
+  mrb_int wait_count = 80;
+  unsigned char values[10];
+  int sel_bit;
+
+  mrb_get_args(mrb, "|iii", &port, &map, &wait_count);
+  sel_bit = x68k_joy_default_sel_bit((int)port);
+  x68k_joy_read_sega_sequence((int)port, sel_bit, wait_count, values);
+
+  return mrb_fixnum_value((mrb_int)x68k_joy_decode_sega6b(values, (int)map));
 }
 
 static mrb_value
@@ -2298,6 +2555,11 @@ mrb_mruby_x68k_stdio_gem_init(mrb_state *mrb)
   joy = mrb_define_module_under(mrb, x68k, "Joy");
   mrb_define_class_method(mrb, joy, "get", x68k_joy_get, MRB_ARGS_OPT(1));
   mrb_define_class_method(mrb, joy, "raw", x68k_joy_get, MRB_ARGS_OPT(1));
+  mrb_define_class_method(mrb, joy, "direct_raw", x68k_joy_direct_raw, MRB_ARGS_OPT(1));
+  mrb_define_class_method(mrb, joy, "control", x68k_joy_control, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, joy, "control_bit", x68k_joy_control_bit, MRB_ARGS_REQ(2));
+  mrb_define_class_method(mrb, joy, "sega6b_raw", x68k_joy_sega6b_raw, MRB_ARGS_ARG(0, 3));
+  mrb_define_class_method(mrb, joy, "sega6b", x68k_joy_sega6b, MRB_ARGS_ARG(0, 3));
 
   bg = mrb_define_module_under(mrb, x68k, "Bg");
   mrb_define_class_method(mrb, bg, "ctrlst", x68k_bg_ctrlst, MRB_ARGS_REQ(3));
