@@ -268,6 +268,17 @@ build/x68k/bin/mruby.x
 
 68030/060turbo ではキャッシュと速度の恩恵で、Rubyらしいオブジェクト指向コードもさらに現実的になるはずです。
 
+## 参考にしたもの
+
+開発にあたって以下のものを参考にさせていただきました。ありがとうございます。
+
+- Human68k v3.02 by SHARP/Hudson
+- Z-MUSIC の公開ドキュメント / ファンクションコール仕様
+- [ぷにぐらま～ずまにゅある](https://github.com/kg68k/puni) / [libzm2](https://github.com/kg68k/libzm2) by TcbnErik / kg68k 氏
+- [micropython-x68k](https://github.com/yunkya2/micropython-x68k) by yunkya2 氏
+
+libzm2 のライセンスについては [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
+
 ## ライセンス
 
 このリポジトリ固有のコードは MIT License です。
