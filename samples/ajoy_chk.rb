@@ -14,23 +14,21 @@ def draw(raw, values, mode, speed, preset)
   X68k::Text.locate(0, 0)
   line("AJOY.X analog joystick test")
   line("ESC/Q: quit")
-  line("usage: mruby ajoy_chk.rb [real|merge|emu]")
+  line("usage: mruby ajoy_chk.rb [real|usbCyber]")
   line("available?: #{X68k::Ajoy.available?}")
   line("mode: #{mode}  speed: #{speed}  preset: #{preset}")
   line("throttle_reverse: #{X68k::Ajoy.throttle_reverse?}")
   line
 
   if raw && values
-    ud, lr, throttle, option, trigger = raw
+    raw_ud, raw_lr, raw_throttle, raw_trigger = raw
+    ud, lr, throttle, trigger = values
     line "stick U/D : #{ud.to_s.rjust(3)}  #{hex4(ud)}"
     line "stick L/R : #{lr.to_s.rjust(3)}  #{hex4(lr)}"
-    adj_throttle = values[2]
     line "throttle  : #{throttle.to_s.rjust(3)}  #{hex4(throttle)}"
-    line "thr adj   : #{adj_throttle.to_s.rjust(3)}  #{hex4(adj_throttle)}"
-    line "option    : #{option.to_s.rjust(3)}  #{hex4(option)}"
+    line "thr raw   : #{raw_throttle.to_s.rjust(3)}  #{hex4(raw_throttle)}"
     line "trigger   : #{hex4(trigger)}"
-    line "mask raw  : #{hex4(X68k::Ajoy.trigger_mask_raw || 0)}"
-    line "mask merge: #{hex4(X68k::Ajoy.trigger_mask_merged || 0)}"
+    line "mask      : #{hex4(X68k::Ajoy.trigger_mask || 0)}"
     line
     buttons = X68k::Ajoy.buttons
     line "buttons   : #{buttons && buttons.length > 0 ? buttons.join(" ") : "(none)"}"
@@ -51,13 +49,9 @@ unless X68k::Ajoy.available?
 end
 
 preset = ARGV.length > 0 ? ARGV[0] : "real"
-if preset == "emu"
-  X68k::Ajoy.button_preset = "emu"
+if preset == "usbCyber"
+  X68k::Ajoy.button_preset = "usbCyber"
   X68k::Ajoy.throttle_reverse = true
-elsif preset == "merge" || preset == "merged"
-  X68k::Ajoy.button_preset = "merge"
-  X68k::Ajoy.throttle_reverse = false
-  preset = "merge"
 else
   X68k::Ajoy.button_preset = "real"
   X68k::Ajoy.throttle_reverse = false

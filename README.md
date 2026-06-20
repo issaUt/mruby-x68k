@@ -23,6 +23,7 @@ v0.3.0 では kg68k / TcbnErik さんの [libzm2](https://github.com/kg68k/libzm
 - IOCS ベースのグラフィック描画
 - テキスト表示、カーソル制御、画面クリア
 - キーボード入力、ジョイスティック入力
+- AJOY.X 経由の CyberStick / アナログジョイスティック入力
 - スプライト表示、PCG 定義、パレット設定
 - 1面BGのタイル表示、スクロール、マップ描画
 - CRTC垂直表示/垂直帰線期間のチェックと待機
@@ -39,6 +40,7 @@ v0.3.0 では kg68k / TcbnErik さんの [libzm2](https://github.com/kg68k/libzm
 - `bg_main.rb`, `bg_map.rb`: BG表示とスクロールの確認
 - `graph_demo.rb`: グラフィック画面への線・矩形・塗りつぶし描画
 - `joy_spr.rb`, `spr_move.rb`: 入力とスプライト移動
+- `ajoy_chk.rb`: AJOY.X 経由の CyberStick / アナログジョイスティック確認
 - `map_chk.rb`: BGマップ表示確認
 - `crtc_chk.rb`: CRTC垂直表示/垂直帰線待ちの確認
 - `sys_iocs_chk.rb`: スーパーバイザ切り替え、割り込み禁止、汎用IOCS呼び出しの確認
@@ -97,6 +99,8 @@ mruby maze_chase.rb clear
 `speed=30` は `wait=2` 相当の指定です。
 `noaudio` / `no-audio` を指定すると Z-MUSIC なしで実行できます。
 ファイル名は X68000 / Human68k で扱いやすいよう、拡張子込み21文字以内にしています。
+
+CyberStick / アナログジョイスティック対応は AJOY.X を外部常駐ドライバとして使用します。詳細は [docs/cyberstick-ajoy.md](docs/cyberstick-ajoy.md) を参照してください。
 実装上のメモは [docs/game-sample-notes.md](docs/game-sample-notes.md) にまとめています。
 
 ## 低レベル制御
@@ -276,6 +280,7 @@ build/x68k/bin/mruby.x
 - Z-MUSIC の公開ドキュメント / ファンクションコール仕様
 - [ぷにぐらま～ずまにゅある](https://github.com/kg68k/puni) / [libzm2](https://github.com/kg68k/libzm2) by TcbnErik / kg68k 氏
 - [micropython-x68k](https://github.com/yunkya2/micropython-x68k) by yunkya2 氏
+- [usbCyberstick](https://github.com/ztto/usbCyberstick) by ztto 氏
 
 libzm2 のライセンスについては [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
 

@@ -1510,17 +1510,12 @@ typedef struct {
 
 static const x68k_ajoy_button_pattern x68k_ajoy_patterns_real[] = {
   {"select", 0x0001}, {"start", 0x0002}, {"e2", 0x0004}, {"e1", 0x0008},
-  {"d", 0x0010}, {"c", 0x0020}, {"a", 0x0140}, {"a_plus", 0x0440},
-  {"b", 0x0280}, {"b_plus", 0x0880}
+  {"d", 0x0010}, {"c", 0x0020},
+  {"a", 0x0140}, {"a", 0x0440}, {"a_plus", 0x0440},
+  {"b", 0x0280}, {"b", 0x0880}, {"b_plus", 0x0880}
 };
 
-static const x68k_ajoy_button_pattern x68k_ajoy_patterns_merge[] = {
-  {"select", 0x0001}, {"start", 0x0002}, {"e2", 0x0004}, {"e1", 0x0008},
-  {"d", 0x0010}, {"c", 0x0020}, {"a", 0x0140}, {"a", 0x0440},
-  {"b", 0x0280}, {"b", 0x0880}
-};
-
-static const x68k_ajoy_button_pattern x68k_ajoy_patterns_emu[] = {
+static const x68k_ajoy_button_pattern x68k_ajoy_patterns_usb_cyber[] = {
   {"select", 0x0001}, {"start", 0x0002}, {"e2", 0x0004}, {"e1", 0x0008},
   {"d", 0x0010}, {"c", 0x0020}, {"a", 0x0a80}, {"b", 0x0540}
 };
@@ -1641,19 +1636,11 @@ x68k_ajoy_set_button_patterns_from_table(const x68k_ajoy_button_pattern *pattern
 static void
 x68k_ajoy_set_button_preset_raw(const char *preset)
 {
-  if (strcmp(preset, "emu") == 0) {
+  if (strcmp(preset, "usbCyber") == 0) {
     x68k_ajoy_set_button_patterns_from_table(
-      x68k_ajoy_patterns_emu,
-      (int)(sizeof(x68k_ajoy_patterns_emu) / sizeof(x68k_ajoy_patterns_emu[0])),
-      "emu"
-    );
-    return;
-  }
-  if (strcmp(preset, "merge") == 0 || strcmp(preset, "merged") == 0) {
-    x68k_ajoy_set_button_patterns_from_table(
-      x68k_ajoy_patterns_merge,
-      (int)(sizeof(x68k_ajoy_patterns_merge) / sizeof(x68k_ajoy_patterns_merge[0])),
-      "merge"
+      x68k_ajoy_patterns_usb_cyber,
+      (int)(sizeof(x68k_ajoy_patterns_usb_cyber) / sizeof(x68k_ajoy_patterns_usb_cyber[0])),
+      "usbCyber"
     );
     return;
   }
@@ -1749,55 +1736,61 @@ x68k_ajoy_button_patterns_set(mrb_state *mrb, mrb_value self)
 }
 
 static unsigned short
-x68k_ajoy_trigger_mask_raw_value(unsigned short trigger)
+x68k_ajoy_trigger_raw_bits(unsigned short trigger)
 {
   return (unsigned short)((~trigger) & 0xffff);
 }
 
 static unsigned short
-x68k_ajoy_trigger_mask_merged_value(unsigned short trigger)
+x68k_ajoy_trigger_mask_value(unsigned short trigger)
 {
-  unsigned short raw = x68k_ajoy_trigger_mask_raw_value(trigger);
-  unsigned short merged = (unsigned short)(raw & 0x003f);
+  unsigned short raw = x68k_ajoy_trigger_raw_bits(trigger);
+  unsigned short mask = 0;
 
   if ((raw & 0x0140) == 0x0140 || (raw & 0x0440) == 0x0440 || (raw & 0x0a80) == 0x0a80) {
-    merged |= 0x0040;
+    mask |= 0x0001; /* a */
   }
   if ((raw & 0x0280) == 0x0280 || (raw & 0x0880) == 0x0880 || (raw & 0x0540) == 0x0540) {
-    merged |= 0x0080;
+    mask |= 0x0002; /* b */
+  }
+  if ((raw & 0x0020) != 0) {
+    mask |= 0x0004; /* c */
+  }
+  if ((raw & 0x0010) != 0) {
+    mask |= 0x0008; /* d */
+  }
+  if ((raw & 0x0008) != 0) {
+    mask |= 0x0010; /* e1 */
+  }
+  if ((raw & 0x0004) != 0) {
+    mask |= 0x0020; /* e2 */
+  }
+  if ((raw & 0x0002) != 0) {
+    mask |= 0x0040; /* start */
+  }
+  if ((raw & 0x0001) != 0) {
+    mask |= 0x0080; /* select */
+  }
+  if ((raw & 0x0440) == 0x0440) {
+    mask |= 0x0100; /* a_plus */
+  }
+  if ((raw & 0x0880) == 0x0880) {
+    mask |= 0x0200; /* b_plus */
   }
 
-  return merged;
-}
-
-static mrb_value
-x68k_ajoy_trigger_mask_raw(mrb_state *mrb, mrb_value self)
-{
-  unsigned short buffer[5] = {0, 0, 0, 0, 0};
-
-  if (mrb_nil_p(x68k_ajoy_read_raw(mrb, buffer))) {
-    return mrb_nil_value();
-  }
-
-  return mrb_fixnum_value((mrb_int)x68k_ajoy_trigger_mask_raw_value(buffer[4]));
-}
-
-static mrb_value
-x68k_ajoy_trigger_mask_merged(mrb_state *mrb, mrb_value self)
-{
-  unsigned short buffer[5] = {0, 0, 0, 0, 0};
-
-  if (mrb_nil_p(x68k_ajoy_read_raw(mrb, buffer))) {
-    return mrb_nil_value();
-  }
-
-  return mrb_fixnum_value((mrb_int)x68k_ajoy_trigger_mask_merged_value(buffer[4]));
+  return mask;
 }
 
 static mrb_value
 x68k_ajoy_trigger_mask(mrb_state *mrb, mrb_value self)
 {
-  return x68k_ajoy_trigger_mask_merged(mrb, self);
+  unsigned short buffer[5] = {0, 0, 0, 0, 0};
+
+  if (mrb_nil_p(x68k_ajoy_read_raw(mrb, buffer))) {
+    return mrb_nil_value();
+  }
+
+  return mrb_fixnum_value((mrb_int)x68k_ajoy_trigger_mask_value(buffer[4]));
 }
 
 static mrb_value
@@ -1863,7 +1856,6 @@ x68k_ajoy_read(mrb_state *mrb, mrb_value self)
 {
   unsigned short buffer[5] = {0, 0, 0, 0, 0};
   mrb_value result;
-  int i;
 
   if (mrb_nil_p(x68k_ajoy_read_raw(mrb, buffer))) {
     return mrb_nil_value();
@@ -1871,10 +1863,11 @@ x68k_ajoy_read(mrb_state *mrb, mrb_value self)
 
   x68k_ajoy_apply_adjustments(buffer);
 
-  result = mrb_ary_new_capa(mrb, 5);
-  for (i = 0; i < 5; i++) {
-    mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)buffer[i]));
-  }
+  result = mrb_ary_new_capa(mrb, 4);
+  mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)buffer[0]));
+  mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)buffer[1]));
+  mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)buffer[2]));
+  mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)buffer[4]));
 
   return result;
 }
@@ -1906,16 +1899,16 @@ x68k_ajoy_read_raw_value(mrb_state *mrb, mrb_value self)
 {
   unsigned short buffer[5] = {0, 0, 0, 0, 0};
   mrb_value result;
-  int i;
 
   if (mrb_nil_p(x68k_ajoy_read_raw(mrb, buffer))) {
     return mrb_nil_value();
   }
 
-  result = mrb_ary_new_capa(mrb, 5);
-  for (i = 0; i < 5; i++) {
-    mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)buffer[i]));
-  }
+  result = mrb_ary_new_capa(mrb, 4);
+  mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)buffer[0]));
+  mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)buffer[1]));
+  mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)buffer[2]));
+  mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)buffer[4]));
 
   return result;
 }
@@ -2402,6 +2395,200 @@ x68k_joy_control_bit(mrb_state *mrb, mrb_value self)
 #define X68K_JOY_DETECTED_6B (1 << 15)
 #define X68K_JOY_SEGA6B_PHASES 5
 #define X68K_JOY_SEGA6B_SCAN_PHASES 9
+#define X68K_JOY_CYBER_NIBBLES 12
+
+static int
+x68k_joy_default_req_bit(int port)
+{
+  return port == 1 ? 5 : 4;
+}
+
+static int
+x68k_joy_read_cyber_poll(int port, int req_bit, int ack_bit, mrb_int timeout, unsigned char values[X68K_JOY_CYBER_NIBBLES], mrb_int *edges, mrb_int *loops, unsigned char *first_value, unsigned char *last_value)
+{
+  volatile unsigned char *joy_port = x68k_joy_port_addr(port);
+  volatile unsigned char *bsr = (volatile unsigned char *)X68K_JOY_BSR_ADDR;
+  int old_super = _iocs_b_super(0);
+  int count = 0;
+  unsigned char value;
+  int last_ack;
+
+  if (timeout < 0) {
+    timeout = 0;
+  }
+
+  value = *joy_port;
+  *first_value = value;
+  last_ack = (value & (1 << ack_bit)) == 0;
+  *edges = 0;
+  *loops = 0;
+
+  *bsr = (unsigned char)(((req_bit & 7) << 1) | 0);
+  while (count < X68K_JOY_CYBER_NIBBLES && *loops < timeout) {
+    int ack;
+
+    value = *joy_port;
+    ack = (value & (1 << ack_bit)) == 0;
+    if (!last_ack && ack) {
+      values[count++] = (unsigned char)((value & 0x0f) << 4);
+      (*edges)++;
+      if (count == 1) {
+        *bsr = (unsigned char)(((req_bit & 7) << 1) | 1);
+      }
+    }
+    last_ack = ack;
+    (*loops)++;
+  }
+  *bsr = (unsigned char)(((req_bit & 7) << 1) | 1);
+  *last_value = *joy_port;
+
+  if (old_super > 0) {
+    _iocs_b_super(old_super);
+  }
+
+  return count;
+}
+
+static void
+x68k_joy_cyber_args(mrb_state *mrb, int *port, mrb_int *timeout, int *ack_bit, int *req_bit)
+{
+  mrb_int port_arg = 0;
+  mrb_int timeout_arg = 30000;
+  mrb_int ack_arg = 6;
+  mrb_int req_arg = -1;
+
+  mrb_get_args(mrb, "|iiii", &port_arg, &timeout_arg, &ack_arg, &req_arg);
+  if (ack_arg < 0 || ack_arg > 7) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "ack_bit must be 0..7");
+  }
+  if (req_arg > 7) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "req_bit must be 0..7");
+  }
+
+  *port = (int)port_arg;
+  *timeout = timeout_arg;
+  *ack_bit = (int)ack_arg;
+  *req_bit = req_arg < 0 ? x68k_joy_default_req_bit(*port) : (int)req_arg;
+}
+
+static mrb_value
+x68k_joy_cyber_raw(mrb_state *mrb, mrb_value self)
+{
+  int port;
+  int req_bit;
+  int ack_bit;
+  mrb_int timeout;
+  mrb_int edges;
+  mrb_int loops;
+  unsigned char first_value;
+  unsigned char last_value;
+  unsigned char values[X68K_JOY_CYBER_NIBBLES];
+  int count;
+  int i;
+  mrb_value result;
+
+  x68k_joy_cyber_args(mrb, &port, &timeout, &ack_bit, &req_bit);
+  count = x68k_joy_read_cyber_poll(port, req_bit, ack_bit, timeout, values, &edges, &loops, &first_value, &last_value);
+
+  result = mrb_ary_new_capa(mrb, count);
+  for (i = 0; i < count; i++) {
+    mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)values[i]));
+  }
+
+  return result;
+}
+
+static mrb_value
+x68k_joy_cyber_scan_raw(mrb_state *mrb, mrb_value self)
+{
+  int port;
+  int req_bit;
+  int ack_bit;
+  mrb_int timeout;
+  mrb_int edges;
+  mrb_int loops;
+  unsigned char first_value;
+  unsigned char last_value;
+  unsigned char values[X68K_JOY_CYBER_NIBBLES];
+  int count;
+  int i;
+  mrb_value raw;
+  mrb_value result;
+
+  x68k_joy_cyber_args(mrb, &port, &timeout, &ack_bit, &req_bit);
+  count = x68k_joy_read_cyber_poll(port, req_bit, ack_bit, timeout, values, &edges, &loops, &first_value, &last_value);
+
+  raw = mrb_ary_new_capa(mrb, count);
+  for (i = 0; i < count; i++) {
+    mrb_ary_push(mrb, raw, mrb_fixnum_value((mrb_int)values[i]));
+  }
+
+  result = mrb_ary_new_capa(mrb, 5);
+  mrb_ary_push(mrb, result, raw);
+  mrb_ary_push(mrb, result, mrb_fixnum_value(edges));
+  mrb_ary_push(mrb, result, mrb_fixnum_value(loops));
+  mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)first_value));
+  mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)last_value));
+
+  return result;
+}
+
+static mrb_value
+x68k_joy_cyber(mrb_state *mrb, mrb_value self)
+{
+  int port;
+  int req_bit;
+  int ack_bit;
+  mrb_int timeout;
+  mrb_int edges;
+  mrb_int loops;
+  unsigned char first_value;
+  unsigned char last_value;
+  unsigned char values[X68K_JOY_CYBER_NIBBLES];
+  int count;
+  int x;
+  int y;
+  int throttle;
+  int buttons;
+  mrb_value result;
+
+  x68k_joy_cyber_args(mrb, &port, &timeout, &ack_bit, &req_bit);
+  count = x68k_joy_read_cyber_poll(port, req_bit, ack_bit, timeout, values, &edges, &loops, &first_value, &last_value);
+  if (count < X68K_JOY_CYBER_NIBBLES) {
+    return mrb_nil_value();
+  }
+
+  x = (values[3] & 0xf0) | ((values[7] >> 4) & 0x0f);
+  y = (values[2] & 0xf0) | ((values[6] >> 4) & 0x0f);
+  throttle = (values[4] & 0xf0) | ((values[8] >> 4) & 0x0f);
+  buttons = (values[0] & 0xf0) | ((values[1] >> 4) & 0x0f);
+  buttons = (0xff - buttons) & 0xff;
+
+  {
+    int raw10 = values[10] & 0xf0;
+    int normal = buttons;
+    buttons = 0;
+    if ((normal & 0x40) != 0) buttons |= 0x0001; /* a */
+    if ((normal & 0x80) != 0) buttons |= 0x0002; /* b */
+    if ((normal & 0x20) != 0) buttons |= 0x0004; /* c */
+    if ((normal & 0x10) != 0) buttons |= 0x0008; /* d */
+    if ((normal & 0x08) != 0) buttons |= 0x0010; /* e1 */
+    if ((normal & 0x04) != 0) buttons |= 0x0020; /* e2 */
+    if ((normal & 0x02) != 0) buttons |= 0x0040; /* start */
+    if ((normal & 0x01) != 0) buttons |= 0x0080; /* select */
+    if ((normal & 0x40) != 0 && raw10 == 0xb0) buttons |= 0x0100; /* a_plus */
+    if ((normal & 0x80) != 0 && raw10 == 0x70) buttons |= 0x0200; /* b_plus */
+  }
+
+  result = mrb_ary_new_capa(mrb, 4);
+  mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)x));
+  mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)y));
+  mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)throttle));
+  mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)buttons));
+
+  return result;
+}
+
 static int
 x68k_joy_default_sel_bit(int port)
 {
@@ -3201,6 +3388,9 @@ mrb_mruby_x68k_stdio_gem_init(mrb_state *mrb)
   mrb_define_class_method(mrb, joy, "sega6b_raw", x68k_joy_sega6b_raw, MRB_ARGS_ARG(0, 3));
   mrb_define_class_method(mrb, joy, "sega6b", x68k_joy_sega6b, MRB_ARGS_ARG(0, 2));
   mrb_define_class_method(mrb, joy, "sega6b_scan_raw", x68k_joy_sega6b_scan_raw, MRB_ARGS_ARG(0, 3));
+  mrb_define_class_method(mrb, joy, "cyber_raw", x68k_joy_cyber_raw, MRB_ARGS_ARG(0, 4));
+  mrb_define_class_method(mrb, joy, "cyber_scan_raw", x68k_joy_cyber_scan_raw, MRB_ARGS_ARG(0, 4));
+  mrb_define_class_method(mrb, joy, "cyber", x68k_joy_cyber, MRB_ARGS_ARG(0, 4));
 
   ajoy = mrb_define_module_under(mrb, x68k, "Ajoy");
   mrb_define_class_method(mrb, ajoy, "available?", x68k_ajoy_available, MRB_ARGS_NONE());
@@ -3209,8 +3399,6 @@ mrb_mruby_x68k_stdio_gem_init(mrb_state *mrb)
   mrb_define_class_method(mrb, ajoy, "throttle_reverse?", x68k_ajoy_throttle_reverse_get, MRB_ARGS_NONE());
   mrb_define_class_method(mrb, ajoy, "throttle_reverse=", x68k_ajoy_throttle_reverse_set, MRB_ARGS_REQ(1));
   mrb_define_class_method(mrb, ajoy, "trigger_mask", x68k_ajoy_trigger_mask, MRB_ARGS_NONE());
-  mrb_define_class_method(mrb, ajoy, "trigger_mask_merged", x68k_ajoy_trigger_mask_merged, MRB_ARGS_NONE());
-  mrb_define_class_method(mrb, ajoy, "trigger_mask_raw", x68k_ajoy_trigger_mask_raw, MRB_ARGS_NONE());
   mrb_define_class_method(mrb, ajoy, "buttons", x68k_ajoy_buttons, MRB_ARGS_NONE());
   mrb_define_class_method(mrb, ajoy, "button_map", x68k_ajoy_button_map_get, MRB_ARGS_NONE());
   mrb_define_class_method(mrb, ajoy, "button_map=", x68k_ajoy_button_map_set, MRB_ARGS_REQ(1));
