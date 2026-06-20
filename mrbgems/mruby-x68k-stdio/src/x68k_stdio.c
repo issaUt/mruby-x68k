@@ -1448,6 +1448,528 @@ x68k_iocs_arg_long(mrb_state *mrb, mrb_value value)
   return (long)mrb_integer(value);
 }
 
+static unsigned long
+x68k_ajoy_vector(void)
+{
+  unsigned long addr;
+
+  __asm__ volatile (
+    "movew #0x01f2,%%sp@-\n"
+    ".word 0xff35\n"
+    "addql #2,%%sp\n"
+    "movel %%d0,%0\n"
+    : "=d"(addr)
+    :
+    : "d0", "cc", "memory"
+  );
+
+  return addr;
+}
+
+static int
+x68k_ajoy_available_raw(void)
+{
+  unsigned long addr = x68k_ajoy_vector();
+
+  if (addr == 0 || addr > 0x00ffffff || addr < 8 || (addr & 1) != 0) {
+    return 0;
+  }
+
+  return *(volatile unsigned long *)(addr - 8) == 0x4973696dUL &&
+         *(volatile unsigned long *)(addr - 4) == 0x6f636869UL;
+}
+
+static long
+x68k_ajoy_call(int md, int d2, void *buffer)
+{
+  long result;
+
+  __asm__ volatile (
+    "movel #0x000000f2,%%d0\n"
+    "movel %1,%%d1\n"
+    "movel %2,%%d2\n"
+    "movel %3,%%a1\n"
+    "trap #15\n"
+    "movel %%d0,%0\n"
+    : "=d"(result)
+    : "d"((long)md), "d"((long)d2), "g"(buffer)
+    : "d0", "d1", "d2", "a1", "cc", "memory"
+  );
+
+  return result;
+}
+
+#define X68K_AJOY_BUTTONS 16
+#define X68K_AJOY_BUTTON_NAME_SIZE 16
+#define X68K_AJOY_BUTTON_PATTERNS 16
+
+typedef struct {
+  const char *name;
+  unsigned short mask;
+} x68k_ajoy_button_pattern;
+
+static const x68k_ajoy_button_pattern x68k_ajoy_patterns_real[] = {
+  {"select", 0x0001}, {"start", 0x0002}, {"e2", 0x0004}, {"e1", 0x0008},
+  {"d", 0x0010}, {"c", 0x0020}, {"a", 0x0140}, {"a_plus", 0x0440},
+  {"b", 0x0280}, {"b_plus", 0x0880}
+};
+
+static const x68k_ajoy_button_pattern x68k_ajoy_patterns_merge[] = {
+  {"select", 0x0001}, {"start", 0x0002}, {"e2", 0x0004}, {"e1", 0x0008},
+  {"d", 0x0010}, {"c", 0x0020}, {"a", 0x0140}, {"a", 0x0440},
+  {"b", 0x0280}, {"b", 0x0880}
+};
+
+static const x68k_ajoy_button_pattern x68k_ajoy_patterns_emu[] = {
+  {"select", 0x0001}, {"start", 0x0002}, {"e2", 0x0004}, {"e1", 0x0008},
+  {"d", 0x0010}, {"c", 0x0020}, {"a", 0x0a80}, {"b", 0x0540}
+};
+
+static char x68k_ajoy_button_map[X68K_AJOY_BUTTONS][X68K_AJOY_BUTTON_NAME_SIZE] = {
+  "select", "start", "e2", "e1", "d", "c", "b_plus_b2", "a_plus_a2",
+  "b2", "a2", "b", "a", "", "", "", ""
+};
+static char x68k_ajoy_button_pattern_names[X68K_AJOY_BUTTON_PATTERNS][X68K_AJOY_BUTTON_NAME_SIZE];
+static unsigned short x68k_ajoy_button_pattern_masks[X68K_AJOY_BUTTON_PATTERNS];
+static int x68k_ajoy_button_pattern_count = 0;
+static char x68k_ajoy_button_preset[X68K_AJOY_BUTTON_NAME_SIZE] = "";
+static int x68k_ajoy_throttle_reverse = 0;
+
+static mrb_value
+x68k_ajoy_read_raw(mrb_state *mrb, unsigned short buffer[5])
+{
+  long status;
+
+  if (!x68k_ajoy_available_raw()) {
+    return mrb_nil_value();
+  }
+
+  status = x68k_ajoy_call(0, 0, buffer);
+  if (status < 0) {
+    return mrb_nil_value();
+  }
+
+  return mrb_true_value();
+}
+
+static mrb_value
+x68k_ajoy_button_map_get(mrb_state *mrb, mrb_value self)
+{
+  mrb_value result = mrb_ary_new_capa(mrb, X68K_AJOY_BUTTONS);
+  int i;
+
+  for (i = 0; i < X68K_AJOY_BUTTONS; i++) {
+    if (x68k_ajoy_button_map[i][0] == '\0') {
+      mrb_ary_push(mrb, result, mrb_nil_value());
+    }
+    else {
+      mrb_ary_push(mrb, result, mrb_str_new_cstr(mrb, x68k_ajoy_button_map[i]));
+    }
+  }
+
+  return result;
+}
+
+static mrb_value
+x68k_ajoy_button_map_set(mrb_state *mrb, mrb_value self)
+{
+  mrb_value map;
+  mrb_int len;
+  int i;
+
+  mrb_get_args(mrb, "A", &map);
+  len = RARRAY_LEN(map);
+  if (len > X68K_AJOY_BUTTONS) {
+    len = X68K_AJOY_BUTTONS;
+  }
+
+  for (i = 0; i < X68K_AJOY_BUTTONS; i++) {
+    x68k_ajoy_button_map[i][0] = '\0';
+  }
+
+  for (i = 0; i < len; i++) {
+    mrb_value label = mrb_ary_ref(mrb, map, i);
+    mrb_value str;
+    mrb_int copy_len;
+
+    if (mrb_nil_p(label)) {
+      continue;
+    }
+
+    str = mrb_obj_as_string(mrb, label);
+    copy_len = RSTRING_LEN(str);
+    if (copy_len >= X68K_AJOY_BUTTON_NAME_SIZE) {
+      copy_len = X68K_AJOY_BUTTON_NAME_SIZE - 1;
+    }
+    memcpy(x68k_ajoy_button_map[i], RSTRING_PTR(str), (size_t)copy_len);
+    x68k_ajoy_button_map[i][copy_len] = '\0';
+  }
+
+  return map;
+}
+
+
+static void
+x68k_ajoy_copy_label(char *dest, const char *src)
+{
+  size_t copy_len = strlen(src);
+  if (copy_len >= X68K_AJOY_BUTTON_NAME_SIZE) {
+    copy_len = X68K_AJOY_BUTTON_NAME_SIZE - 1;
+  }
+  memcpy(dest, src, copy_len);
+  dest[copy_len] = '\0';
+}
+
+static void
+x68k_ajoy_set_button_patterns_from_table(const x68k_ajoy_button_pattern *patterns, int count, const char *preset)
+{
+  int i;
+
+  if (count > X68K_AJOY_BUTTON_PATTERNS) {
+    count = X68K_AJOY_BUTTON_PATTERNS;
+  }
+
+  x68k_ajoy_button_pattern_count = 0;
+  for (i = 0; i < count; i++) {
+    x68k_ajoy_copy_label(x68k_ajoy_button_pattern_names[i], patterns[i].name);
+    x68k_ajoy_button_pattern_masks[i] = patterns[i].mask;
+    x68k_ajoy_button_pattern_count++;
+  }
+  x68k_ajoy_copy_label(x68k_ajoy_button_preset, preset);
+}
+
+static void
+x68k_ajoy_set_button_preset_raw(const char *preset)
+{
+  if (strcmp(preset, "emu") == 0) {
+    x68k_ajoy_set_button_patterns_from_table(
+      x68k_ajoy_patterns_emu,
+      (int)(sizeof(x68k_ajoy_patterns_emu) / sizeof(x68k_ajoy_patterns_emu[0])),
+      "emu"
+    );
+    return;
+  }
+  if (strcmp(preset, "merge") == 0 || strcmp(preset, "merged") == 0) {
+    x68k_ajoy_set_button_patterns_from_table(
+      x68k_ajoy_patterns_merge,
+      (int)(sizeof(x68k_ajoy_patterns_merge) / sizeof(x68k_ajoy_patterns_merge[0])),
+      "merge"
+    );
+    return;
+  }
+  x68k_ajoy_set_button_patterns_from_table(
+    x68k_ajoy_patterns_real,
+    (int)(sizeof(x68k_ajoy_patterns_real) / sizeof(x68k_ajoy_patterns_real[0])),
+    "real"
+  );
+}
+
+static mrb_value
+x68k_ajoy_button_preset_get(mrb_state *mrb, mrb_value self)
+{
+  if (x68k_ajoy_button_preset[0] == '\0') {
+    x68k_ajoy_set_button_preset_raw("real");
+  }
+  return mrb_str_new_cstr(mrb, x68k_ajoy_button_preset);
+}
+
+static mrb_value
+x68k_ajoy_button_preset_set(mrb_state *mrb, mrb_value self)
+{
+  char *preset;
+
+  mrb_get_args(mrb, "z", &preset);
+  x68k_ajoy_set_button_preset_raw(preset);
+  return mrb_str_new_cstr(mrb, x68k_ajoy_button_preset);
+}
+
+static mrb_value
+x68k_ajoy_button_patterns_get(mrb_state *mrb, mrb_value self)
+{
+  mrb_value result = mrb_ary_new_capa(mrb, x68k_ajoy_button_pattern_count);
+  int i;
+
+  for (i = 0; i < x68k_ajoy_button_pattern_count; i++) {
+    mrb_value pair = mrb_ary_new_capa(mrb, 2);
+    mrb_ary_push(mrb, pair, mrb_str_new_cstr(mrb, x68k_ajoy_button_pattern_names[i]));
+    mrb_ary_push(mrb, pair, mrb_fixnum_value((mrb_int)x68k_ajoy_button_pattern_masks[i]));
+    mrb_ary_push(mrb, result, pair);
+  }
+
+  return result;
+}
+
+static mrb_value
+x68k_ajoy_button_patterns_set(mrb_state *mrb, mrb_value self)
+{
+  mrb_value patterns;
+  mrb_int len;
+  int i;
+
+  mrb_get_args(mrb, "A", &patterns);
+  len = RARRAY_LEN(patterns);
+  if (len > X68K_AJOY_BUTTON_PATTERNS) {
+    len = X68K_AJOY_BUTTON_PATTERNS;
+  }
+
+  x68k_ajoy_button_pattern_count = 0;
+  x68k_ajoy_button_preset[0] = '\0';
+  for (i = 0; i < len; i++) {
+    mrb_value pair = mrb_ary_ref(mrb, patterns, i);
+    mrb_value label;
+    mrb_value str;
+    mrb_value mask_value;
+    mrb_int copy_len;
+    mrb_int mask;
+
+    if (!mrb_array_p(pair) || RARRAY_LEN(pair) < 2) {
+      mrb_raise(mrb, E_ARGUMENT_ERROR, "button pattern must be [name, mask]");
+    }
+
+    label = mrb_ary_ref(mrb, pair, 0);
+    if (mrb_nil_p(label)) {
+      continue;
+    }
+
+    mask_value = mrb_ary_ref(mrb, pair, 1);
+    mask = mrb_fixnum(mask_value);
+    str = mrb_obj_as_string(mrb, label);
+    copy_len = RSTRING_LEN(str);
+    if (copy_len >= X68K_AJOY_BUTTON_NAME_SIZE) {
+      copy_len = X68K_AJOY_BUTTON_NAME_SIZE - 1;
+    }
+
+    memcpy(x68k_ajoy_button_pattern_names[x68k_ajoy_button_pattern_count], RSTRING_PTR(str), (size_t)copy_len);
+    x68k_ajoy_button_pattern_names[x68k_ajoy_button_pattern_count][copy_len] = '\0';
+    x68k_ajoy_button_pattern_masks[x68k_ajoy_button_pattern_count] = (unsigned short)(mask & 0xffff);
+    x68k_ajoy_button_pattern_count++;
+  }
+
+  return patterns;
+}
+
+static unsigned short
+x68k_ajoy_trigger_mask_raw_value(unsigned short trigger)
+{
+  return (unsigned short)((~trigger) & 0xffff);
+}
+
+static unsigned short
+x68k_ajoy_trigger_mask_merged_value(unsigned short trigger)
+{
+  unsigned short raw = x68k_ajoy_trigger_mask_raw_value(trigger);
+  unsigned short merged = (unsigned short)(raw & 0x003f);
+
+  if ((raw & 0x0140) == 0x0140 || (raw & 0x0440) == 0x0440 || (raw & 0x0a80) == 0x0a80) {
+    merged |= 0x0040;
+  }
+  if ((raw & 0x0280) == 0x0280 || (raw & 0x0880) == 0x0880 || (raw & 0x0540) == 0x0540) {
+    merged |= 0x0080;
+  }
+
+  return merged;
+}
+
+static mrb_value
+x68k_ajoy_trigger_mask_raw(mrb_state *mrb, mrb_value self)
+{
+  unsigned short buffer[5] = {0, 0, 0, 0, 0};
+
+  if (mrb_nil_p(x68k_ajoy_read_raw(mrb, buffer))) {
+    return mrb_nil_value();
+  }
+
+  return mrb_fixnum_value((mrb_int)x68k_ajoy_trigger_mask_raw_value(buffer[4]));
+}
+
+static mrb_value
+x68k_ajoy_trigger_mask_merged(mrb_state *mrb, mrb_value self)
+{
+  unsigned short buffer[5] = {0, 0, 0, 0, 0};
+
+  if (mrb_nil_p(x68k_ajoy_read_raw(mrb, buffer))) {
+    return mrb_nil_value();
+  }
+
+  return mrb_fixnum_value((mrb_int)x68k_ajoy_trigger_mask_merged_value(buffer[4]));
+}
+
+static mrb_value
+x68k_ajoy_trigger_mask(mrb_state *mrb, mrb_value self)
+{
+  return x68k_ajoy_trigger_mask_merged(mrb, self);
+}
+
+static mrb_value
+x68k_ajoy_buttons(mrb_state *mrb, mrb_value self)
+{
+  unsigned short buffer[5] = {0, 0, 0, 0, 0};
+  unsigned short mask;
+  mrb_value result;
+  int i;
+
+  if (mrb_nil_p(x68k_ajoy_read_raw(mrb, buffer))) {
+    return mrb_nil_value();
+  }
+
+  mask = (unsigned short)((~buffer[4]) & 0xffff);
+  result = mrb_ary_new(mrb);
+  if (x68k_ajoy_button_pattern_count > 0) {
+    for (i = 0; i < x68k_ajoy_button_pattern_count; i++) {
+      unsigned short pattern = x68k_ajoy_button_pattern_masks[i];
+      int duplicate = 0;
+      int j;
+
+      if (pattern == 0 || (mask & pattern) != pattern) {
+        continue;
+      }
+
+      for (j = 0; j < i; j++) {
+        unsigned short prev_pattern = x68k_ajoy_button_pattern_masks[j];
+        if (strcmp(x68k_ajoy_button_pattern_names[j], x68k_ajoy_button_pattern_names[i]) == 0 &&
+            prev_pattern != 0 && (mask & prev_pattern) == prev_pattern) {
+          duplicate = 1;
+          break;
+        }
+      }
+
+      if (!duplicate) {
+        mrb_ary_push(mrb, result, mrb_str_new_cstr(mrb, x68k_ajoy_button_pattern_names[i]));
+      }
+    }
+  }
+  else {
+    for (i = 0; i < X68K_AJOY_BUTTONS; i++) {
+      if ((mask & (1 << i)) != 0 && x68k_ajoy_button_map[i][0] != '\0') {
+        mrb_ary_push(mrb, result, mrb_str_new_cstr(mrb, x68k_ajoy_button_map[i]));
+      }
+    }
+  }
+
+  return result;
+}
+
+
+static void
+x68k_ajoy_apply_adjustments(unsigned short buffer[5])
+{
+  if (x68k_ajoy_throttle_reverse) {
+    buffer[2] = (unsigned short)(255 - (buffer[2] & 0xff));
+  }
+}
+
+static mrb_value
+x68k_ajoy_read(mrb_state *mrb, mrb_value self)
+{
+  unsigned short buffer[5] = {0, 0, 0, 0, 0};
+  mrb_value result;
+  int i;
+
+  if (mrb_nil_p(x68k_ajoy_read_raw(mrb, buffer))) {
+    return mrb_nil_value();
+  }
+
+  x68k_ajoy_apply_adjustments(buffer);
+
+  result = mrb_ary_new_capa(mrb, 5);
+  for (i = 0; i < 5; i++) {
+    mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)buffer[i]));
+  }
+
+  return result;
+}
+
+static mrb_value
+x68k_ajoy_throttle_reverse_get(mrb_state *mrb, mrb_value self)
+{
+  return mrb_bool_value(x68k_ajoy_throttle_reverse);
+}
+
+static mrb_value
+x68k_ajoy_throttle_reverse_set(mrb_state *mrb, mrb_value self)
+{
+  mrb_bool reverse;
+
+  mrb_get_args(mrb, "b", &reverse);
+  x68k_ajoy_throttle_reverse = reverse ? 1 : 0;
+  return mrb_bool_value(x68k_ajoy_throttle_reverse);
+}
+
+static mrb_value
+x68k_ajoy_available(mrb_state *mrb, mrb_value self)
+{
+  return mrb_bool_value(x68k_ajoy_available_raw());
+}
+
+static mrb_value
+x68k_ajoy_read_raw_value(mrb_state *mrb, mrb_value self)
+{
+  unsigned short buffer[5] = {0, 0, 0, 0, 0};
+  mrb_value result;
+  int i;
+
+  if (mrb_nil_p(x68k_ajoy_read_raw(mrb, buffer))) {
+    return mrb_nil_value();
+  }
+
+  result = mrb_ary_new_capa(mrb, 5);
+  for (i = 0; i < 5; i++) {
+    mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)buffer[i]));
+  }
+
+  return result;
+}
+
+static mrb_value
+x68k_ajoy_mode(mrb_state *mrb, mrb_value self)
+{
+  mrb_int mode = -1;
+
+  mrb_get_args(mrb, "|i", &mode);
+  if (!x68k_ajoy_available_raw()) {
+    return mrb_nil_value();
+  }
+  return mrb_fixnum_value((mrb_int)x68k_ajoy_call(1, (int)mode, NULL));
+}
+
+static mrb_value
+x68k_ajoy_mode_set(mrb_state *mrb, mrb_value self)
+{
+  mrb_int mode;
+
+  mrb_get_args(mrb, "i", &mode);
+  if (!x68k_ajoy_available_raw()) {
+    return mrb_nil_value();
+  }
+  x68k_ajoy_call(1, (int)mode, NULL);
+  return mrb_fixnum_value(mode);
+}
+
+static mrb_value
+x68k_ajoy_speed(mrb_state *mrb, mrb_value self)
+{
+  mrb_int speed = -1;
+
+  mrb_get_args(mrb, "|i", &speed);
+  if (!x68k_ajoy_available_raw()) {
+    return mrb_nil_value();
+  }
+  return mrb_fixnum_value((mrb_int)x68k_ajoy_call(2, (int)speed, NULL));
+}
+
+static mrb_value
+x68k_ajoy_speed_set(mrb_state *mrb, mrb_value self)
+{
+  mrb_int speed;
+
+  mrb_get_args(mrb, "i", &speed);
+  if (!x68k_ajoy_available_raw()) {
+    return mrb_nil_value();
+  }
+  x68k_ajoy_call(2, (int)speed, NULL);
+  return mrb_fixnum_value(speed);
+}
+
 static mrb_value
 x68k_iocs_call(mrb_state *mrb, mrb_value self)
 {
@@ -1880,7 +2402,6 @@ x68k_joy_control_bit(mrb_state *mrb, mrb_value self)
 #define X68K_JOY_DETECTED_6B (1 << 15)
 #define X68K_JOY_SEGA6B_PHASES 5
 #define X68K_JOY_SEGA6B_SCAN_PHASES 9
-
 static int
 x68k_joy_default_sel_bit(int port)
 {
@@ -2594,6 +3115,7 @@ mrb_mruby_x68k_stdio_gem_init(mrb_state *mrb)
   struct RClass *key;
   struct RClass *crtc;
   struct RClass *joy;
+  struct RClass *ajoy;
   struct RClass *bg;
   struct RClass *sys;
   struct RClass *sprite;
@@ -2679,6 +3201,27 @@ mrb_mruby_x68k_stdio_gem_init(mrb_state *mrb)
   mrb_define_class_method(mrb, joy, "sega6b_raw", x68k_joy_sega6b_raw, MRB_ARGS_ARG(0, 3));
   mrb_define_class_method(mrb, joy, "sega6b", x68k_joy_sega6b, MRB_ARGS_ARG(0, 2));
   mrb_define_class_method(mrb, joy, "sega6b_scan_raw", x68k_joy_sega6b_scan_raw, MRB_ARGS_ARG(0, 3));
+
+  ajoy = mrb_define_module_under(mrb, x68k, "Ajoy");
+  mrb_define_class_method(mrb, ajoy, "available?", x68k_ajoy_available, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, ajoy, "read_raw", x68k_ajoy_read_raw_value, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, ajoy, "read", x68k_ajoy_read, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, ajoy, "throttle_reverse?", x68k_ajoy_throttle_reverse_get, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, ajoy, "throttle_reverse=", x68k_ajoy_throttle_reverse_set, MRB_ARGS_REQ(1));
+  mrb_define_class_method(mrb, ajoy, "trigger_mask", x68k_ajoy_trigger_mask, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, ajoy, "trigger_mask_merged", x68k_ajoy_trigger_mask_merged, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, ajoy, "trigger_mask_raw", x68k_ajoy_trigger_mask_raw, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, ajoy, "buttons", x68k_ajoy_buttons, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, ajoy, "button_map", x68k_ajoy_button_map_get, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, ajoy, "button_map=", x68k_ajoy_button_map_set, MRB_ARGS_REQ(1));
+  mrb_define_class_method(mrb, ajoy, "button_patterns", x68k_ajoy_button_patterns_get, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, ajoy, "button_patterns=", x68k_ajoy_button_patterns_set, MRB_ARGS_REQ(1));
+  mrb_define_class_method(mrb, ajoy, "button_preset", x68k_ajoy_button_preset_get, MRB_ARGS_NONE());
+  mrb_define_class_method(mrb, ajoy, "button_preset=", x68k_ajoy_button_preset_set, MRB_ARGS_REQ(1));
+  mrb_define_class_method(mrb, ajoy, "mode", x68k_ajoy_mode, MRB_ARGS_OPT(1));
+  mrb_define_class_method(mrb, ajoy, "mode=", x68k_ajoy_mode_set, MRB_ARGS_REQ(1));
+  mrb_define_class_method(mrb, ajoy, "speed", x68k_ajoy_speed, MRB_ARGS_OPT(1));
+  mrb_define_class_method(mrb, ajoy, "speed=", x68k_ajoy_speed_set, MRB_ARGS_REQ(1));
 
   bg = mrb_define_module_under(mrb, x68k, "Bg");
   mrb_define_class_method(mrb, bg, "ctrlst", x68k_bg_ctrlst, MRB_ARGS_REQ(3));
