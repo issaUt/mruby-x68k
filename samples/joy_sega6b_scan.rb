@@ -82,8 +82,8 @@ def put_line(s)
   printf("%-58s\n", s)
 end
 
-puts "SEGA 3B/6B mask test"
-puts "usage: mruby joy_sega6b_test.rb [port=0] [wait=80]"
+puts "SEGA 6B scan raw test"
+puts "usage: mruby joy_sega6b_scan.rb [port=0] [wait=80]"
 puts "ESC/Q: quit"
 
 X68k::Text.cursor_off
@@ -99,12 +99,12 @@ while running
     end
   end
 
-  raw = X68k::Joy.sega6b_raw(port, wait_count)
+  raw = X68k::Joy.sega6b_scan_raw(port, wait_count)
   mask = decode_from_raw(raw)
   names = pressed_names(mask)
 
   X68k::Text.locate(0, 0)
-  put_line("SEGA 3B/6B mask test")
+  put_line("SEGA 6B scan raw test")
   put_line("ESC/Q: quit")
   put_line(sprintf("port=%d wait=%d", port, wait_count))
   put_line(sprintf("mask: %s  6B:%s", mask_bits(mask), (mask & DETECTED_6B) != 0 ? "yes" : "no"))

@@ -1878,6 +1878,8 @@ x68k_joy_control_bit(mrb_state *mrb, mrb_value self)
 #define X68K_JOY_BTN_START  (1 << 10)
 #define X68K_JOY_BTN_MODE   (1 << 11)
 #define X68K_JOY_DETECTED_6B (1 << 15)
+#define X68K_JOY_SEGA6B_PHASES 5
+#define X68K_JOY_SEGA6B_SCAN_PHASES 9
 
 static int
 x68k_joy_default_sel_bit(int port)
@@ -1886,7 +1888,7 @@ x68k_joy_default_sel_bit(int port)
 }
 
 static void
-x68k_joy_read_sega_sequence(int port, int sel_bit, mrb_int wait_count, unsigned char values[10])
+x68k_joy_read_sega_phases(int port, int sel_bit, mrb_int wait_count, unsigned char *values, int phases)
 {
   volatile unsigned char *joy_port = x68k_joy_port_addr(port);
   int i;
@@ -1897,12 +1899,48 @@ x68k_joy_read_sega_sequence(int port, int sel_bit, mrb_int wait_count, unsigned 
   *(volatile unsigned char *)X68K_JOY_BSR_ADDR = 12;  /* PC6 low */
   *(volatile unsigned char *)X68K_JOY_BSR_ADDR = 14;  /* PC7 low */
 
-  for (i = 0; i < 10; i++) {
+  for (i = 0; i < phases; i++) {
     *(volatile unsigned char *)X68K_JOY_BSR_ADDR = (unsigned char)(((sel_bit & 7) << 1) | ((i & 1) == 0 ? 1 : 0));
     x68k_joy_delay(wait_count);
     values[i] = *joy_port;
   }
   *(volatile unsigned char *)X68K_JOY_BSR_ADDR = (unsigned char)((sel_bit & 7) << 1);
+
+  if (old_super > 0) {
+    _iocs_b_super(old_super);
+  }
+}
+
+static void
+x68k_joy_read_sega_sequence(int port, int sel_bit, mrb_int wait_count, unsigned char values[X68K_JOY_SEGA6B_PHASES])
+{
+  x68k_joy_read_sega_phases(port, sel_bit, wait_count, values, X68K_JOY_SEGA6B_PHASES);
+}
+
+static void
+x68k_joy_read_sega_scan_sequence(int port, int sel_bit, mrb_int wait_count, unsigned char values[X68K_JOY_SEGA6B_SCAN_PHASES])
+{
+  x68k_joy_read_sega_phases(port, sel_bit, wait_count, values, X68K_JOY_SEGA6B_SCAN_PHASES);
+}
+
+static void
+x68k_joy_read_sega3b_sequence(int port, int sel_bit, mrb_int wait_count, unsigned char values[2])
+{
+  volatile unsigned char *joy_port = x68k_joy_port_addr(port);
+  int old_super = _iocs_b_super(0);
+
+  *(volatile unsigned char *)X68K_JOY_BSR_ADDR = 8;   /* PC4 low */
+  *(volatile unsigned char *)X68K_JOY_BSR_ADDR = 10;  /* PC5 low */
+  *(volatile unsigned char *)X68K_JOY_BSR_ADDR = 12;  /* PC6 low */
+  *(volatile unsigned char *)X68K_JOY_BSR_ADDR = 14;  /* PC7 low */
+
+  *(volatile unsigned char *)X68K_JOY_BSR_ADDR = (unsigned char)(((sel_bit & 7) << 1) | 1);
+  x68k_joy_delay(wait_count);
+  values[0] = *joy_port;
+
+  *(volatile unsigned char *)X68K_JOY_BSR_ADDR = (unsigned char)((sel_bit & 7) << 1);
+  x68k_joy_delay(wait_count);
+  values[1] = *joy_port;
 
   if (old_super > 0) {
     _iocs_b_super(old_super);
@@ -1916,15 +1954,37 @@ x68k_joy_bit_down(unsigned char value, int bit)
 }
 
 static unsigned long
-x68k_joy_decode_sega6b(const unsigned char values[10], int map)
+x68k_joy_decode_sega3b(const unsigned char values[2])
+{
+  unsigned char base_h = values[0];
+  unsigned char base_l = values[1];
+  unsigned long mask = 0;
+
+  if (x68k_joy_bit_down(base_h, 0)) mask |= X68K_JOY_BTN_UP;
+  if (x68k_joy_bit_down(base_h, 1)) mask |= X68K_JOY_BTN_DOWN;
+  if (x68k_joy_bit_down(base_h, 2)) mask |= X68K_JOY_BTN_LEFT;
+  if (x68k_joy_bit_down(base_h, 3)) mask |= X68K_JOY_BTN_RIGHT;
+
+  /*
+   * X68000 adapter mapping confirmed on hardware. 3B mode intentionally
+   * does not enter the 6B extension sequence.
+   */
+  if (x68k_joy_bit_down(base_l, 5)) mask |= X68K_JOY_BTN_A;
+  if (x68k_joy_bit_down(base_h, 5)) mask |= X68K_JOY_BTN_B;
+  if (x68k_joy_bit_down(base_h, 6)) mask |= X68K_JOY_BTN_C;
+  if (x68k_joy_bit_down(base_l, 6)) mask |= X68K_JOY_BTN_START;
+
+  return mask;
+}
+
+static unsigned long
+x68k_joy_decode_sega6b(const unsigned char *values)
 {
   unsigned char base_h = values[0];
   unsigned char base_l = values[1];
   unsigned char marker = values[3];
   unsigned char ext_h = values[4];
   unsigned long mask = 0;
-
-  (void)map;
 
   if (x68k_joy_bit_down(base_h, 0)) mask |= X68K_JOY_BTN_UP;
   if (x68k_joy_bit_down(base_h, 1)) mask |= X68K_JOY_BTN_DOWN;
@@ -1935,35 +1995,92 @@ x68k_joy_decode_sega6b(const unsigned char values[10], int map)
     mask |= X68K_JOY_DETECTED_6B;
   }
 
-  if (map == 1) {
-    /*
-     * Alternate mapping kept for emulator/USB adapter configurations observed
-     * during testing.
-     */
-    if (x68k_joy_bit_down(base_h, 6)) mask |= X68K_JOY_BTN_A;
-    if (x68k_joy_bit_down(base_h, 5)) mask |= X68K_JOY_BTN_B;
-    if (x68k_joy_bit_down(ext_h, 0)) mask |= X68K_JOY_BTN_C;
-    if (x68k_joy_bit_down(ext_h, 2)) mask |= X68K_JOY_BTN_X;
-    if (x68k_joy_bit_down(base_l, 5)) mask |= X68K_JOY_BTN_Y;
-    if (x68k_joy_bit_down(ext_h, 1)) mask |= X68K_JOY_BTN_Z;
-  }
-  else {
-    /*
-     * X68000 adapter mapping confirmed on hardware:
-     * A=base_l bit5, B=base_h bit5, C=base_h bit6,
-     * X=ext_h bit2, Y=ext_h bit1, Z=ext_h bit0, Start=base_l bit6.
-     */
-    if (x68k_joy_bit_down(base_l, 5)) mask |= X68K_JOY_BTN_A;
-    if (x68k_joy_bit_down(base_h, 5)) mask |= X68K_JOY_BTN_B;
-    if (x68k_joy_bit_down(base_h, 6)) mask |= X68K_JOY_BTN_C;
-    if (x68k_joy_bit_down(ext_h, 2)) mask |= X68K_JOY_BTN_X;
-    if (x68k_joy_bit_down(ext_h, 1)) mask |= X68K_JOY_BTN_Y;
-    if (x68k_joy_bit_down(ext_h, 0)) mask |= X68K_JOY_BTN_Z;
-  }
+  /*
+   * X68000 adapter mapping confirmed on hardware:
+   * A=base_l bit5, B=base_h bit5, C=base_h bit6,
+   * X=ext_h bit2, Y=ext_h bit1, Z=ext_h bit0, Start=base_l bit6.
+   */
+  if (x68k_joy_bit_down(base_l, 5)) mask |= X68K_JOY_BTN_A;
+  if (x68k_joy_bit_down(base_h, 5)) mask |= X68K_JOY_BTN_B;
+  if (x68k_joy_bit_down(base_h, 6)) mask |= X68K_JOY_BTN_C;
+  if (x68k_joy_bit_down(ext_h, 2)) mask |= X68K_JOY_BTN_X;
+  if (x68k_joy_bit_down(ext_h, 1)) mask |= X68K_JOY_BTN_Y;
+  if (x68k_joy_bit_down(ext_h, 0)) mask |= X68K_JOY_BTN_Z;
   if (x68k_joy_bit_down(base_l, 6)) mask |= X68K_JOY_BTN_START;
   if (x68k_joy_bit_down(ext_h, 3)) mask |= X68K_JOY_BTN_MODE;
 
   return mask;
+}
+
+static mrb_value
+x68k_joy_sega3b_raw(mrb_state *mrb, mrb_value self)
+{
+  mrb_int port = 0;
+  mrb_int wait_count = 80;
+  mrb_int sel_bit = -1;
+  unsigned char values[2];
+  mrb_value result;
+  int i;
+
+  mrb_get_args(mrb, "|iii", &port, &wait_count, &sel_bit);
+  if (sel_bit < 0) {
+    sel_bit = x68k_joy_default_sel_bit((int)port);
+  }
+  if (sel_bit > 7) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "sel_bit must be 0..7");
+  }
+
+  x68k_joy_read_sega3b_sequence((int)port, (int)sel_bit, wait_count, values);
+
+  result = mrb_ary_new_capa(mrb, 2);
+  for (i = 0; i < 2; i++) {
+    mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)values[i]));
+  }
+
+  return result;
+}
+
+static mrb_value
+x68k_joy_sega3b(mrb_state *mrb, mrb_value self)
+{
+  mrb_int port = 0;
+  mrb_int wait_count = 80;
+  unsigned char values[2];
+  int sel_bit;
+
+  mrb_get_args(mrb, "|ii", &port, &wait_count);
+  sel_bit = x68k_joy_default_sel_bit((int)port);
+  x68k_joy_read_sega3b_sequence((int)port, sel_bit, wait_count, values);
+
+  return mrb_fixnum_value((mrb_int)x68k_joy_decode_sega3b(values));
+}
+
+static mrb_value
+x68k_joy_sega6b_scan_raw(mrb_state *mrb, mrb_value self)
+{
+  mrb_int port = 0;
+  mrb_int wait_count = 80;
+  mrb_int sel_bit = -1;
+  unsigned char values[X68K_JOY_SEGA6B_SCAN_PHASES];
+  mrb_value result;
+  int i;
+
+  mrb_get_args(mrb, "|iii", &port, &wait_count, &sel_bit);
+  if (sel_bit < 0) {
+    sel_bit = x68k_joy_default_sel_bit((int)port);
+  }
+  if (sel_bit > 7) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "sel_bit must be 0..7");
+  }
+
+  x68k_joy_read_sega_scan_sequence((int)port, (int)sel_bit, wait_count, values);
+
+  result = mrb_ary_new_capa(mrb, X68K_JOY_SEGA6B_SCAN_PHASES);
+  for (i = 0; i < X68K_JOY_SEGA6B_SCAN_PHASES; i++) {
+    mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)values[i]));
+  }
+
+  return result;
 }
 
 static mrb_value
@@ -1972,7 +2089,7 @@ x68k_joy_sega6b_raw(mrb_state *mrb, mrb_value self)
   mrb_int port = 0;
   mrb_int wait_count = 80;
   mrb_int sel_bit = -1;
-  unsigned char values[10];
+  unsigned char values[X68K_JOY_SEGA6B_PHASES];
   mrb_value result;
   int i;
 
@@ -1986,8 +2103,8 @@ x68k_joy_sega6b_raw(mrb_state *mrb, mrb_value self)
 
   x68k_joy_read_sega_sequence((int)port, (int)sel_bit, wait_count, values);
 
-  result = mrb_ary_new_capa(mrb, 10);
-  for (i = 0; i < 10; i++) {
+  result = mrb_ary_new_capa(mrb, X68K_JOY_SEGA6B_PHASES);
+  for (i = 0; i < X68K_JOY_SEGA6B_PHASES; i++) {
     mrb_ary_push(mrb, result, mrb_fixnum_value((mrb_int)values[i]));
   }
 
@@ -1998,16 +2115,15 @@ static mrb_value
 x68k_joy_sega6b(mrb_state *mrb, mrb_value self)
 {
   mrb_int port = 0;
-  mrb_int map = 0;
   mrb_int wait_count = 80;
-  unsigned char values[10];
+  unsigned char values[X68K_JOY_SEGA6B_PHASES];
   int sel_bit;
 
-  mrb_get_args(mrb, "|iii", &port, &map, &wait_count);
+  mrb_get_args(mrb, "|ii", &port, &wait_count);
   sel_bit = x68k_joy_default_sel_bit((int)port);
   x68k_joy_read_sega_sequence((int)port, sel_bit, wait_count, values);
 
-  return mrb_fixnum_value((mrb_int)x68k_joy_decode_sega6b(values, (int)map));
+  return mrb_fixnum_value((mrb_int)x68k_joy_decode_sega6b(values));
 }
 
 static mrb_value
@@ -2558,8 +2674,11 @@ mrb_mruby_x68k_stdio_gem_init(mrb_state *mrb)
   mrb_define_class_method(mrb, joy, "direct_raw", x68k_joy_direct_raw, MRB_ARGS_OPT(1));
   mrb_define_class_method(mrb, joy, "control", x68k_joy_control, MRB_ARGS_NONE());
   mrb_define_class_method(mrb, joy, "control_bit", x68k_joy_control_bit, MRB_ARGS_REQ(2));
+  mrb_define_class_method(mrb, joy, "sega3b_raw", x68k_joy_sega3b_raw, MRB_ARGS_ARG(0, 3));
+  mrb_define_class_method(mrb, joy, "sega3b", x68k_joy_sega3b, MRB_ARGS_ARG(0, 2));
   mrb_define_class_method(mrb, joy, "sega6b_raw", x68k_joy_sega6b_raw, MRB_ARGS_ARG(0, 3));
-  mrb_define_class_method(mrb, joy, "sega6b", x68k_joy_sega6b, MRB_ARGS_ARG(0, 3));
+  mrb_define_class_method(mrb, joy, "sega6b", x68k_joy_sega6b, MRB_ARGS_ARG(0, 2));
+  mrb_define_class_method(mrb, joy, "sega6b_scan_raw", x68k_joy_sega6b_scan_raw, MRB_ARGS_ARG(0, 3));
 
   bg = mrb_define_module_under(mrb, x68k, "Bg");
   mrb_define_class_method(mrb, bg, "ctrlst", x68k_bg_ctrlst, MRB_ARGS_REQ(3));
