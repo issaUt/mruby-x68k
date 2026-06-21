@@ -43,6 +43,7 @@ v0.3.0 では kg68k / TcbnErik さんの [libzm2](https://github.com/kg68k/libzm
 - `joy_spr.rb`, `spr_move.rb`: 入力とスプライト移動
 - `ajoy_chk.rb`: AJOY.X 経由の CyberStick / アナログジョイスティック確認
 - `backquote_chk.rb`: 暫定導入したバッククォートで外部コマンドの標準出力を取得する確認
+- `bq_dir_sort.rb`: バッククォートで取得した `dir` 出力をRubyで整形・ソートする例
 - `cyber_flight.rb`: CyberStick / AJOY.X 入力を使ったワイヤーフレーム風フライト確認
 - `map_chk.rb`: BGマップ表示確認
 - `crtc_chk.rb`: CRTC垂直表示/垂直帰線待ちの確認
