@@ -5,7 +5,9 @@ if ARGV.length == 1
 end
 
 out = `dir`
-lines = out.split(13.chr)
+lf = 10.chr
+cr = 13.chr
+lines = out.gsub(cr + lf, lf).gsub(cr, lf).split(lf)
 print "Total line = ", lines.length, "\n"
 
 elements = []
