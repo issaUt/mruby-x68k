@@ -19,6 +19,7 @@ v0.3.0 では kg68k / TcbnErik さんの [libzm2](https://github.com/kg68k/libzm
 
 - `mruby.x` による Ruby スクリプト実行
 - `puts`, `print`, `p`, `printf`
+- バッククォートによるコマンド実行結果の文字列取得（暫定導入）
 - `File.exist?`, `File.read`, `File.write`, `File.size`, `File.open`
 - IOCS ベースのグラフィック描画
 - テキスト表示、カーソル制御、画面クリア
@@ -41,6 +42,8 @@ v0.3.0 では kg68k / TcbnErik さんの [libzm2](https://github.com/kg68k/libzm
 - `graph_demo.rb`: グラフィック画面への線・矩形・塗りつぶし描画
 - `joy_spr.rb`, `spr_move.rb`: 入力とスプライト移動
 - `ajoy_chk.rb`: AJOY.X 経由の CyberStick / アナログジョイスティック確認
+- `backquote_chk.rb`: 暫定導入したバッククォートで外部コマンドの標準出力を取得する確認
+- `cyber_flight.rb`: CyberStick / AJOY.X 入力を使ったワイヤーフレーム風フライト確認
 - `map_chk.rb`: BGマップ表示確認
 - `crtc_chk.rb`: CRTC垂直表示/垂直帰線待ちの確認
 - `sys_iocs_chk.rb`: スーパーバイザ切り替え、割り込み禁止、汎用IOCS呼び出しの確認

@@ -340,6 +340,57 @@ x68k_kernel_open(mrb_state *mrb, mrb_value self)
   return x68k_open_file(mrb, file_class, path, mode);
 }
 
+static unsigned int x68k_backquote_counter = 0;
+
+static mrb_value
+x68k_kernel_backquote(mrb_state *mrb, mrb_value self)
+{
+  char *cmd;
+  char tmpname[16];
+  char syscmd[256];
+  FILE *fp;
+  mrb_value result;
+  char buffer[256];
+  size_t nread;
+  int n;
+
+  mrb_get_args(mrb, "z", &cmd);
+
+  n = snprintf(tmpname, sizeof(tmpname), "MRBBQ%03u.TMP", x68k_backquote_counter++ % 1000);
+  if (n < 0 || n >= (int)sizeof(tmpname)) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "temporary file name too long");
+  }
+
+  n = snprintf(syscmd, sizeof(syscmd), "%s > %s", cmd, tmpname);
+  if (n < 0 || n >= (int)sizeof(syscmd)) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "command too long");
+  }
+
+  remove(tmpname);
+  system(syscmd);
+
+  fp = fopen(tmpname, "rb");
+  if (fp == NULL) {
+    remove(tmpname);
+    return mrb_str_new_lit(mrb, "");
+  }
+
+  result = mrb_str_new_capa(mrb, 256);
+  while ((nread = fread(buffer, 1, sizeof(buffer), fp)) > 0) {
+    mrb_str_cat(mrb, result, buffer, (mrb_int)nread);
+  }
+
+  if (ferror(fp)) {
+    fclose(fp);
+    remove(tmpname);
+    mrb_sys_fail(mrb, tmpname);
+  }
+
+  fclose(fp);
+  remove(tmpname);
+  return result;
+}
+
 static mrb_value
 x68k_file_exist(mrb_state *mrb, mrb_value self)
 {
@@ -1015,6 +1066,15 @@ x68k_screen_tpalet2(mrb_state *mrb, mrb_value self)
 
   mrb_get_args(mrb, "ii", &palno, &color);
   return mrb_fixnum_value(_iocs_tpalet2((short)palno, (short)color));
+}
+
+static mrb_value
+x68k_screen_apage(mrb_state *mrb, mrb_value self)
+{
+  mrb_int page;
+
+  mrb_get_args(mrb, "i", &page);
+  return mrb_fixnum_value(_iocs_apage((short)page));
 }
 
 static mrb_value
@@ -3313,6 +3373,7 @@ mrb_mruby_x68k_stdio_gem_init(mrb_state *mrb)
   mrb_define_method(mrb, mrb->kernel_module, "puts", x68k_kernel_puts, MRB_ARGS_ANY());
   mrb_define_method(mrb, mrb->kernel_module, "printf", x68k_kernel_printf, MRB_ARGS_ANY());
   mrb_define_method(mrb, mrb->kernel_module, "open", x68k_kernel_open, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
+  mrb_define_method(mrb, mrb->kernel_module, "`", x68k_kernel_backquote, MRB_ARGS_REQ(1));
 
   file = mrb_define_class(mrb, "File", mrb->object_class);
   mrb_define_class_method(mrb, file, "exist?", x68k_file_exist, MRB_ARGS_REQ(1));
@@ -3340,6 +3401,7 @@ mrb_mruby_x68k_stdio_gem_init(mrb_state *mrb)
   mrb_define_class_method(mrb, screen, "home", x68k_screen_home, MRB_ARGS_REQ(3));
   mrb_define_class_method(mrb, screen, "tpalet", x68k_screen_tpalet, MRB_ARGS_REQ(2));
   mrb_define_class_method(mrb, screen, "tpalet2", x68k_screen_tpalet2, MRB_ARGS_REQ(2));
+  mrb_define_class_method(mrb, screen, "apage", x68k_screen_apage, MRB_ARGS_REQ(1));
   mrb_define_class_method(mrb, screen, "vpage", x68k_screen_vpage, MRB_ARGS_REQ(1));
   mrb_define_class_method(mrb, screen, "window", x68k_screen_window, MRB_ARGS_REQ(4));
 

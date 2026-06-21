@@ -1,6 +1,25 @@
 # Changelog
 
-## 0.3.0 - Unreleased
+## 0.3.1 - Unreleased
+
+- SEGA 3B/6B パッド読み取りAPIを追加しました。
+  - `X68k::Joy.sega3b`, `sega3b_raw`
+  - `X68k::Joy.sega6b`, `sega6b_raw`, `sega6b_scan_raw`
+  - 通常利用向けの5フェーズ読み取りと、診断向けのRAWスキャンを分けています。
+- AJOY.X 経由の CyberStick / アナログジョイスティック入力APIを追加しました。
+  - `X68k::Ajoy.available?`, `read_raw`, `read`, `trigger_mask`, `buttons`
+  - スロットル反転、ボタンプリセット、A/A+/B/B+ の扱いを整理しました。
+- CyberStick / AJOY.X を使ったワイヤーフレーム風フライトサンプル `cyber_flight.rb` を追加しました。
+- グラフィック描画ページを切り替える `X68k::Screen.apage` を追加しました。
+  - `X68k::Screen.vpage` と組み合わせたページ切り替え描画をサンプルとドキュメントに反映しました。
+  - mode 10 のグラフィック色指定について、実機確認に基づくメモを追加しました。
+- VSync / Raster / Timer-D / OPM の割り込みpoll APIと確認用サンプルを整理しました。
+  - Ruby VM を割り込みハンドラから直接触らず、C側カウンタをRuby側からpollする方針です。
+  - Z-MUSIC と衝突しやすい割り込みを壊さないよう、enable/disable と調査用サンプルを分けています。
+- Ruby のバッククォート構文で外部コマンドの標準出力を文字列として取得できるようにしました。
+  - 現時点では暫定導入で、実装方式や制約は今後見直す可能性があります。
+
+## 0.3.0
 
 - Z-MUSIC 呼び出しを libzm2 ベースに変更しました。
   - libzm2 ヘッダを `third_party/libzm2/` に同梱しています。
