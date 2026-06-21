@@ -243,7 +243,10 @@ end
 
 def build_frame(roll, pitch, forward, speed)
   segments = []
-  add_world_segments(segments, roll, pitch, forward, speed)
+  # The ground and horizon are the outside world as seen from the aircraft.
+  # Their apparent roll is opposite to the aircraft roll.
+  world_roll = -roll
+  add_world_segments(segments, world_roll, pitch, forward, speed)
   add_plane_segments(segments, roll, pitch)
   segments
 end
