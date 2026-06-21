@@ -20,7 +20,8 @@ v0.3.0 では kg68k / TcbnErik さんの [libzm2](https://github.com/kg68k/libzm
 - `mruby.x` による Ruby スクリプト実行
 - `puts`, `print`, `p`, `printf`
 - バッククォートによるコマンド実行結果の文字列取得（暫定導入）
-- `File.exist?`, `File.read`, `File.write`, `File.size`, `File.open`
+- `File.exist?`, `File.directory?`, `File.file?`, `File.read`, `File.write`, `File.size`, `File.open`
+- `Dir.entries`
 - IOCS ベースのグラフィック描画
 - テキスト表示、カーソル制御、画面クリア
 - キーボード入力、ジョイスティック入力
@@ -44,6 +45,8 @@ v0.3.0 では kg68k / TcbnErik さんの [libzm2](https://github.com/kg68k/libzm
 - `ajoy_chk.rb`: AJOY.X 経由の CyberStick / アナログジョイスティック確認
 - `backquote_chk.rb`: 暫定導入したバッククォートで外部コマンドの標準出力を取得する確認
 - `bq_dir_sort.rb`: バッククォートで取得した `dir` 出力をRubyで整形・ソートする例
+- `bq_grep_cmd.rb`: `Dir.entries` で集めたファイルに外部 `grep` を実行し、結果をRuby側でまとめる例
+- `tree_grep.rb`: `Dir.entries` と `File` APIで再帰的にソースを検索する例
 - `cyber_flight.rb`: CyberStick / AJOY.X 入力を使ったワイヤーフレーム風フライト確認
 - `map_chk.rb`: BGマップ表示確認
 - `crtc_chk.rb`: CRTC垂直表示/垂直帰線待ちの確認

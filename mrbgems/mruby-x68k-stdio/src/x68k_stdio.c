@@ -9,6 +9,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
+#include <sys/stat.h>
 
 #ifndef nullptr
 #define nullptr NULL
@@ -311,6 +313,29 @@ x68k_file_obj_close(mrb_state *mrb, mrb_value self)
 }
 
 static mrb_value
+x68k_dir_entries(mrb_state *mrb, mrb_value self)
+{
+  char *path = (char *)".";
+  DIR *dir;
+  struct dirent *ent;
+  mrb_value ary;
+
+  mrb_get_args(mrb, "|z", &path);
+  dir = opendir(path);
+  if (dir == NULL) {
+    mrb_sys_fail(mrb, path);
+  }
+
+  ary = mrb_ary_new(mrb);
+  while ((ent = readdir(dir)) != NULL) {
+    mrb_ary_push(mrb, ary, mrb_str_new_cstr(mrb, ent->d_name));
+  }
+
+  closedir(dir);
+  return ary;
+}
+
+static mrb_value
 x68k_open_file(mrb_state *mrb, struct RClass *file_class, const char *path, const char *mode)
 {
   FILE *fp;
@@ -405,6 +430,34 @@ x68k_file_exist(mrb_state *mrb, mrb_value self)
 
   fclose(fp);
   return mrb_true_value();
+}
+
+static mrb_value
+x68k_file_directory(mrb_state *mrb, mrb_value self)
+{
+  char *path;
+  struct stat st;
+
+  mrb_get_args(mrb, "z", &path);
+  if (stat(path, &st) != 0) {
+    return mrb_false_value();
+  }
+
+  return S_ISDIR(st.st_mode) ? mrb_true_value() : mrb_false_value();
+}
+
+static mrb_value
+x68k_file_file(mrb_state *mrb, mrb_value self)
+{
+  char *path;
+  struct stat st;
+
+  mrb_get_args(mrb, "z", &path);
+  if (stat(path, &st) != 0) {
+    return mrb_false_value();
+  }
+
+  return S_ISREG(st.st_mode) ? mrb_true_value() : mrb_false_value();
 }
 
 static mrb_value
@@ -3354,6 +3407,7 @@ void
 mrb_mruby_x68k_stdio_gem_init(mrb_state *mrb)
 {
   struct RClass *file;
+  struct RClass *dir;
   struct RClass *x68k_file;
   struct RClass *x68k;
   struct RClass *graph;
@@ -3378,10 +3432,15 @@ mrb_mruby_x68k_stdio_gem_init(mrb_state *mrb)
   file = mrb_define_class(mrb, "File", mrb->object_class);
   mrb_define_class_method(mrb, file, "exist?", x68k_file_exist, MRB_ARGS_REQ(1));
   mrb_define_class_method(mrb, file, "exists?", x68k_file_exist, MRB_ARGS_REQ(1));
+  mrb_define_class_method(mrb, file, "directory?", x68k_file_directory, MRB_ARGS_REQ(1));
+  mrb_define_class_method(mrb, file, "file?", x68k_file_file, MRB_ARGS_REQ(1));
   mrb_define_class_method(mrb, file, "open", x68k_file_open, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
   mrb_define_class_method(mrb, file, "read", x68k_file_read, MRB_ARGS_REQ(1));
   mrb_define_class_method(mrb, file, "size", x68k_file_size, MRB_ARGS_REQ(1));
   mrb_define_class_method(mrb, file, "write", x68k_file_write, MRB_ARGS_REQ(2));
+
+  dir = mrb_define_class(mrb, "Dir", mrb->object_class);
+  mrb_define_class_method(mrb, dir, "entries", x68k_dir_entries, MRB_ARGS_OPT(1));
 
   x68k_file = mrb_define_class(mrb, "X68kFile", mrb->object_class);
   MRB_SET_INSTANCE_TT(x68k_file, MRB_TT_DATA);
