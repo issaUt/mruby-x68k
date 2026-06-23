@@ -290,4 +290,6 @@ libzm2 のライセンスについては [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NO
 
 このリポジトリ固有のコードは MIT License です。
 
+本ソフトウェアは MIT License に基づき、無保証で提供されます。利用によって生じたいかなる損害についても、作者および著作権者は責任を負いません。詳細は [LICENSE](LICENSE) を参照してください。
+
 mruby 本体も MIT License ですが、このリポジトリには mruby 本体は含めていません。ツールチェーンや外部プロジェクトも同梱していません。詳細は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
