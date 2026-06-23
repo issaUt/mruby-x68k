@@ -47,7 +47,7 @@ SEGA 3B/6B パッドは、必要なフェーズだけ読めばゲーム用途で
 
 ### 直接ポーリング実験コードについて
 
-直接ポーリング実験用のコードは `samples/cyber_poll.rb` と `X68k::Joy.cyber_*` 系APIとして残しています。
+直接ポーリング実験用のコードは `samples/input/cyber_poll.rb` と `X68k::Joy.cyber_*` 系APIとして残しています。
 これは CyberStick のプロトコル調査や、REQ/ACK の挙動確認を目的にしたものです。
 
 ただし、通常のアプリケーションやゲームから使う入力APIとしては推奨しません。
@@ -59,16 +59,16 @@ Ruby 側からフェーズ進行を追う方式では、実機とエミュレー
 
 ## サンプル
 
-`samples/ajoy_chk.rb` は、AJOY.X の常駐確認、読み取り値、ボタン名、スロットル反転などを確認するための基本サンプルです。
+`samples/input/ajoy_chk.rb` は、AJOY.X の常駐確認、読み取り値、ボタン名、スロットル反転などを確認するための基本サンプルです。
 
-`samples/cyber_flight.rb` は、AJOY.X から得たスティック、スロットル、トリガー入力を使うワイヤーフレーム風のフライト確認サンプルです。
+`samples/games/cyber_flight.rb` は、AJOY.X から得たスティック、スロットル、トリガー入力を使うワイヤーフレーム風のフライト確認サンプルです。
 グラフィック画面は `X68k::Screen.apage` / `X68k::Screen.vpage` でページ切り替えし、テキスト画面には入力値と押下ボタンを表示します。
 
 実行前に AJOY.X を常駐させてください。
 
 ```text
 AJOY.X
-mruby cyber_flight.rb
+mruby samples/games/cyber_flight.rb
 ```
 
 ## AJOY.X
@@ -231,7 +231,7 @@ Select -> select
 
 USB版CyberStick向けです。エミュレータ側では A/A+、B/B+ が同じ値として見えるため、それに合わせたパターンです。
 
-`samples/ajoy_chk.rb` では、`usbCyber` 指定時に `throttle_reverse = true` も設定しています。
+`samples/input/ajoy_chk.rb` では、`usbCyber` 指定時に `throttle_reverse = true` も設定しています。
 
 ## 調査時の raw trigger 値
 
@@ -275,11 +275,11 @@ Select  0FFE
 ## 確認サンプル
 
 ```text
-mruby ajoy_chk.rb
-mruby ajoy_chk.rb usbCyber
+mruby samples/input/ajoy_chk.rb
+mruby samples/input/ajoy_chk.rb usbCyber
 ```
 
-`samples/ajoy_chk.rb` は、以下を表示します。
+`samples/input/ajoy_chk.rb` は、以下を表示します。
 
 ```text
 stick U/D

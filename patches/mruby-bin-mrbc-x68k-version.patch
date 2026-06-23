@@ -1,0 +1,131 @@
+diff --git a/mrbgems/mruby-bin-mrbc/tools/mrbc/mrbc.c b/mrbgems/mruby-bin-mrbc/tools/mrbc/mrbc.c
+index 9050d138b..d74f70621 100644
+--- a/mrbgems/mruby-bin-mrbc/tools/mrbc/mrbc.c
++++ b/mrbgems/mruby-bin-mrbc/tools/mrbc/mrbc.c
+@@ -10,6 +10,65 @@
+ #include <mruby/dump.h>
+ #include <mruby/proc.h>
+ #include <mruby/internal.h>
++#include <mruby/version.h>
++
++#ifdef MRBC_X68K_LOW_MEMORY_CHECK
++#include <x68k/dos.h>
++
++#ifndef MRBC_X68K_MIN_COMPILE_BLOCK
++#define MRBC_X68K_MIN_COMPILE_BLOCK (128L * 1024L)
++#endif
++
++#define MRBC_X68K_COMPILE_MARGIN (64L * 1024L)
++extern void mrb_x68k_memstat_enable(void);
++extern void mrb_x68k_memstat_set_limit(size_t limit);
++
++static long
++x68k_largest_free_block(void)
++{
++  unsigned long raw = (unsigned long)_dos_malloc(-1);
++
++  /*
++   * Human68k _MALLOC returns 0x81000000 + largest-free-size when
++   * allocation fails. Passing -1 intentionally uses that behavior to query
++   * the largest allocatable block.
++   */
++  if ((raw & 0xff000000UL) == 0x81000000UL) {
++    return (long)(raw & 0x00ffffffUL);
++  }
++  return -1;
++}
++
++static long
++x68k_compile_memory_budget(void)
++{
++  long free_block = x68k_largest_free_block();
++
++  if (free_block < MRBC_X68K_MIN_COMPILE_BLOCK) return 0;
++  if (free_block <= MRBC_X68K_COMPILE_MARGIN) return 0;
++
++  return free_block - MRBC_X68K_COMPILE_MARGIN;
++}
++#endif
++
++static void
++x68k_show_version(void)
++{
++  printf("mruby-x68k 0.4.0\n");
++  printf("target: X68000 / Human68k\n");
++}
++
++static void
++x68k_show_core_version(void)
++{
++  printf("%s\n", MRUBY_DESCRIPTION);
++}
++
++static mrb_bool
++x68k_pre_scan_version_only(int argc, char **argv)
++{
++  return argc == 2 && strcmp(argv[1], "--version") == 0;
++}
+ 
+ #define RITEBIN_EXT ".mrb"
+ #define C_EXT       ".c"
+@@ -132,7 +191,10 @@ parse_args(mrb_state *mrb, int argc, char **argv, struct mrbc_args *args)
+         args->check_syntax = TRUE;
+         break;
+       case 'v':
+-        if (!args->verbose) mrb_show_version(mrb);
++        if (!args->verbose) {
++          x68k_show_version();
++          mrb_show_version(mrb);
++        }
+         args->verbose = TRUE;
+         break;
+       case 'g':
+@@ -152,6 +214,7 @@ parse_args(mrb_state *mrb, int argc, char **argv, struct mrbc_args *args)
+           return i;
+         }
+         if (strcmp(argv[i] + 2, "version") == 0) {
++          x68k_show_version();
+           mrb_show_version(mrb);
+           exit(EXIT_SUCCESS);
+         }
+@@ -283,6 +346,27 @@ dump_file(mrb_state *mrb, FILE *wfp, const char *outfile, const struct RProc *pr
+ int
+ main(int argc, char **argv)
+ {
++  if (x68k_pre_scan_version_only(argc, argv)) {
++    x68k_show_version();
++    x68k_show_core_version();
++    return EXIT_SUCCESS;
++  }
++
++#ifdef MRBC_X68K_LOW_MEMORY_CHECK
++  {
++    long free_block = x68k_largest_free_block();
++    long budget = x68k_compile_memory_budget();
++    if (budget <= 0) {
++      fprintf(stderr,
++              "mrbc: not enough memory to compile (largest free block: %ld bytes)\n",
++              free_block);
++      return EXIT_FAILURE;
++    }
++    mrb_x68k_memstat_enable();
++    mrb_x68k_memstat_set_limit((size_t)budget);
++  }
++#endif
++
+   mrb_state *mrb = mrb_open_core();
+   struct mrbc_args args;
+   FILE *wfp;
+@@ -315,7 +399,11 @@ main(int argc, char **argv)
+   args.idx = n;
+   mrb_value load = load_file(mrb, &args);
+   if (mrb_nil_p(load)) {
+-    cleanup(mrb, &args);
++    /*
++     * On Human68k, closing the VM immediately after a parser error can
++     * fault in some low-memory/error paths. The process is about to exit.
++     */
++    mrb_free(mrb, (void*)args.outfile);
+     return EXIT_FAILURE;
+   }
+   if (args.check_syntax) {

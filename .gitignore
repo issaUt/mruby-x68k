@@ -8,3 +8,6 @@
 build/
 tmp/
 *.log
+# Keep release binaries under dist/.
+!dist/**/*.x
+dist/mruby-x68k-v*/

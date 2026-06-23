@@ -1,20 +1,81 @@
+diff --git a/mrbgems/mruby-bin-mruby/tools/mruby/mruby.c b/mrbgems/mruby-bin-mruby/tools/mruby/mruby.c
+index d5c159f3e..8202a49c8 100644
 --- a/mrbgems/mruby-bin-mruby/tools/mruby/mruby.c
 +++ b/mrbgems/mruby-bin-mruby/tools/mruby/mruby.c
-@@ -42,6 +42,13 @@
+@@ -12,6 +12,12 @@
+ #include <mruby/variable.h>
+ #include <mruby/proc.h>
+ #include <mruby/error.h>
++#include <mruby/version.h>
++
++void mrb_x68k_memstat_enable(void);
++size_t mrb_x68k_memstat_current(void);
++size_t mrb_x68k_memstat_peak(void);
++size_t mrb_x68k_memstat_total(void);
+ 
+ #if defined(_WIN32)
+ # include <io.h> /* for setmode */
+@@ -27,6 +33,7 @@ struct _args {
+   mrb_bool verbose      : 1;
+   mrb_bool version      : 1;
+   mrb_bool debug        : 1;
++  mrb_bool memstat      : 1;
+   int argc;
+   char **argv;
+   int libc;
+@@ -41,6 +48,34 @@ struct options {
+   char short_opt[2];
  };
-
- static void
+ 
++static void
 +x68k_show_version(void)
 +{
-+  printf("mruby-x68k 0.3.1\n");
++  printf("mruby-x68k 0.4.0\n");
 +  printf("target: X68000 / Human68k\n");
 +}
 +
 +static void
++x68k_show_core_version(void)
++{
++  printf("%s\n", MRUBY_DESCRIPTION);
++}
++
++static void
++x68k_print_open_failure(void)
++{
++  x68k_show_version();
++  x68k_show_core_version();
++  printf("error: not enough memory to initialize mruby VM\n");
++}
++
++static mrb_bool
++x68k_pre_scan_version_only(int argc, char **argv)
++{
++  return argc == 2 &&
++    (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-v") == 0);
++}
++
+ static void
  usage(const char *name)
  {
-   static const char *const usage_msg[] = {
-@@ -202,12 +209,14 @@
+@@ -55,6 +90,7 @@ usage(const char *name)
+   "--verbose    run in verbose mode",
+   "--version    print the version",
+   "--copyright  print the copyright",
++  "--memstat    print mruby memory statistics after execution",
+   NULL
+   };
+   const char *const *p = usage_msg;
+@@ -141,6 +177,8 @@ dup_arg_item(mrb_state *mrb, const char *item)
+   return buf;
+ }
+ 
++#define X68K_EXIT_VERSION 2
++
+ static int
+ parse_args(mrb_state *mrb, int argc, char **argv, struct _args *args)
+ {
+@@ -202,14 +240,17 @@ parse_args(mrb_state *mrb, int argc, char **argv, struct _args *args)
      }
      else if (strcmp(opt, "v") == 0) {
        if (!args->verbose) {
@@ -27,5 +88,104 @@
      else if (strcmp(opt, "version") == 0) {
 +      x68k_show_version();
        mrb_show_version(mrb);
+-      exit(EXIT_SUCCESS);
++      args->version = TRUE;
++      return X68K_EXIT_VERSION;
+     }
+     else if (strcmp(opt, "verbose") == 0) {
+       args->verbose = TRUE;
+@@ -218,6 +259,9 @@ parse_args(mrb_state *mrb, int argc, char **argv, struct _args *args)
+       mrb_show_copyright(mrb);
        exit(EXIT_SUCCESS);
      }
++    else if (strcmp(opt, "memstat") == 0) {
++      args->memstat = TRUE;
++    }
+     else {
+       fprintf(stderr, "%s: invalid option %s%s (-h will show valid options)\n",
+               opts->program, opt[1] ? "--" : "-", opt);
+@@ -255,6 +299,35 @@ parse_args(mrb_state *mrb, int argc, char **argv, struct _args *args)
+   return EXIT_SUCCESS;
+ }
+ 
++static mrb_bool
++pre_scan_memstat(int argc, char **argv)
++{
++  for (int i = 1; i < argc; i++) {
++    if (strcmp(argv[i], "--") == 0) return FALSE;
++    if (strcmp(argv[i], "--memstat") == 0) return TRUE;
++    if (argv[i][0] != '-') return FALSE;
++  }
++  return FALSE;
++}
++
++static void
++print_memstat(mrb_state *mrb)
++{
++  size_t current = mrb_x68k_memstat_current();
++  size_t peak = mrb_x68k_memstat_peak();
++  size_t total = mrb_x68k_memstat_total();
++
++  mrb_full_gc(mrb);
++  current = mrb_x68k_memstat_current();
++
++  printf("mruby memory:\n");
++  printf("  current: %lu bytes (%lu KB)\n", (unsigned long)current, (unsigned long)((current + 1023) / 1024));
++  printf("  peak:    %lu bytes (%lu KB)\n", (unsigned long)peak, (unsigned long)((peak + 1023) / 1024));
++  printf("  total:   %lu bytes (%lu KB)\n", (unsigned long)total, (unsigned long)((total + 1023) / 1024));
++  printf("  gc live: %lu objects\n", (unsigned long)mrb->gc.live);
++  printf("  arena:   %d objects\n", mrb->gc.arena_idx);
++}
++
+ static void
+ cleanup(mrb_state *mrb, struct _args *args)
+ {
+@@ -275,19 +348,35 @@ cleanup(mrb_state *mrb, struct _args *args)
+ int
+ main(int argc, char **argv)
+ {
+-  mrb_state *mrb = mrb_open();
+-  int n = -1;
++  mrb_bool memstat = pre_scan_memstat(argc, argv);
++  mrb_state *mrb;
++  int n = EXIT_SUCCESS;
++
++  if (x68k_pre_scan_version_only(argc, argv)) {
++    x68k_show_version();
++    x68k_show_core_version();
++    return EXIT_SUCCESS;
++  }
++
++  if (memstat) {
++    mrb_x68k_memstat_enable();
++  }
++  mrb = mrb_open();
+   struct _args args;
+   mrb_value ARGV;
+   mrb_value v;
+ 
+   if (MRB_OPEN_FAILURE(mrb)) {
+-    mrb_print_error(mrb);  /* handles NULL */
++    x68k_print_open_failure();
+     mrb_close(mrb);        /* handles NULL */
+     return EXIT_FAILURE;
+   }
+ 
+   n = parse_args(mrb, argc, argv, &args);
++  if (n == X68K_EXIT_VERSION) {
++    cleanup(mrb, &args);
++    return EXIT_SUCCESS;
++  }
+   if (n == EXIT_FAILURE || (args.cmdline == NULL && args.rfp == NULL)) {
+     cleanup(mrb, &args);
+     return n;
+@@ -373,6 +462,9 @@ main(int argc, char **argv)
+       puts("Syntax OK");
+     }
+   }
++  if (args.memstat) {
++    print_memstat(mrb);
++  }
+   cleanup(mrb, &args);
+ 
+   return n;

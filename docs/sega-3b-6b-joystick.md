@@ -269,13 +269,13 @@ Right -> base high bit3
 3BのRAWとデコード結果を確認するサンプル:
 
 ```text
-samples/joy_sega3b_test.rb
+samples/input/joy_sega3b_test.rb
 ```
 
 実行例:
 
 ```text
-mruby joy_sega3b_test.rb 0 80
+mruby samples/input/joy_sega3b_test.rb 0 80
 ```
 
 引数:
@@ -288,25 +288,25 @@ mruby joy_sega3b_test.rb 0 80
 6B通常読み取りのRAWとデコード結果を確認するサンプル:
 
 ```text
-samples/joy_sega6b_test.rb
+samples/input/joy_sega6b_test.rb
 ```
 
 実行例:
 
 ```text
-mruby joy_sega6b_test.rb 0 80
+mruby samples/input/joy_sega6b_test.rb 0 80
 ```
 
 6B診断読み取りのRAWとデコード結果を確認するサンプル:
 
 ```text
-samples/joy_sega6b_scan.rb
+samples/input/joy_sega6b_scan.rb
 ```
 
 実行例:
 
 ```text
-mruby joy_sega6b_scan.rb 0 80
+mruby samples/input/joy_sega6b_scan.rb 0 80
 ```
 
 引数:

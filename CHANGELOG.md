@@ -1,6 +1,49 @@
 # Changelog
 
-## 0.3.1 - Unreleased
+## 0.4.0 - Unreleased
+
+- `mruby-x68k-stdio` を廃止し、OS系APIを `mruby-x68k-os`、X68000ハードウェア系APIを `mruby-x68k-hardware` に分離しました。
+- 配布バイナリを `bin/` 以下に整理しました。
+  - `mruby.x`: フル版 `.rb` 実行環境
+  - `mrbc.x`: X68000上で動く `.rb` to `.mrb` コンパイラ
+  - `mrb.x`: フル版 `.mrb` 実行専用VM
+  - `mrb-os.x`: OS-only版 `.mrb` 実行専用VM
+- `mrb.x` / `mrb-os.x` は mruby/c ではなく、mruby本体の RiteBinary `.mrb` 実行専用VMであることをドキュメントに明記しました。
+- WSL上のビルド設定を、フル版、OS-only版、`.mrb` VM版をまとめて生成できる構成に整理しました。
+- 同梱している libzm2 ヘッダを更新し、libzm2 1.1.0 への更新を反映しました。
+
+- Human68k 上で mruby をシェルスクリプト的に使うためのOS系APIを拡充しました。
+  - `system` と `$?` による外部コマンド実行と終了ステータス取得を追加しました。
+  - バッククォート構文で外部コマンドの標準出力を文字列として取得できるようにしました。
+  - バッククォートの一時ファイルは `TMP` / `TEMP` 環境変数を参照して生成先を選ぶようにしました。
+  - `String#lines` / `String#each_line` を追加し、外部コマンド出力をRuby側で処理しやすくしました。
+- ファイル・ディレクトリ操作APIを拡充しました。
+  - `File.read`, `File.write`, `File.readlines`, `File.exist?`, `File.size`, `File.delete`, `File.rename`
+  - `File.basename`, `File.dirname`, `File.expand_path`
+  - `Dir.pwd`, `Dir.chdir`, `Dir.entries`, `Dir.exist?`, `Dir.mkdir`, `Dir.delete`, `Dir.glob`
+  - `FileUtils.cp`, `mv`, `mkdir`, `rm`
+- `ENV` 相当の環境変数APIを追加しました。
+  - `ENV[name]`, `ENV[name]=`, `ENV.delete`, `ENV.keys`
+  - Human68k の挙動に合わせ、参照時は環境変数名の大文字小文字を区別しないようにしました。
+- 最小的な `Pathname` クラスを追加しました。
+  - パスの結合、展開、存在確認、ディレクトリ判定など、OSスクリプト用途で使う範囲を実装しています。
+- `load` / `require` を追加しました。
+  - `mruby.x` では `.rb` / `.mrb` の読み込みに対応しています。
+  - `mrb.x` / `mrb-os.x` では `.mrb` の読み込みに対応しています。
+  - 実装は [mattn/mruby-require](https://github.com/mattn/mruby-require) を参考にし、X68000向けに動的ライブラリ読み込みを除いた形で取り込んでいます。
+- コマンドラインから `-e` で Ruby コードを直接実行できることをドキュメントに追記しました。
+- 低メモリ環境での動作を改善しました。
+  - `_dos_malloc` 失敗時の Human68k 固有の戻り値を正しく判定するようにしました。
+  - `mrbc.x` は最大空きブロックが不足している場合、必要メモリ量と最大空きブロック量を表示して終了するようにしました。
+  - `mruby.x` / `mrb.x` でもメモリ確保失敗時に無言終了しにくいよう、Out of memory 表示を整理しました。
+- サンプルのディレクトリ構成を用途別に整理しました。
+- OS API のサンプルを整理・追加しました。
+  - バッククォートで `dir` 結果を取得してRuby側で整形するサンプル
+  - Rubyのみで再帰検索する `tree_grep.rb`
+  - 外部 `grep` コマンドを利用して結果をRuby側で保持・整形するサンプル
+  - `load` / `require` の `.rb` / `.mrb` 読み込みサンプル
+
+## 0.3.1
 
 - SEGA 3B/6B パッド読み取りAPIを追加しました。
   - `X68k::Joy.sega3b`, `sega3b_raw`

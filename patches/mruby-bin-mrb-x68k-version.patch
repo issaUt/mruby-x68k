@@ -1,0 +1,100 @@
+diff --git a/mrbgems/mruby-bin-mrb/tools/mrb/mrb.c b/mrbgems/mruby-bin-mrb/tools/mrb/mrb.c
+index 670b66b70..79bca2301 100644
+--- a/mrbgems/mruby-bin-mrb/tools/mrb/mrb.c
++++ b/mrbgems/mruby-bin-mrb/tools/mrb/mrb.c
+@@ -31,6 +31,35 @@
+ #include <mruby/dump.h>
+ #include <mruby/variable.h>
+ #include <mruby/error.h>
++#include <mruby/version.h>
++
++static void
++x68k_show_version(void)
++{
++  printf("mruby-x68k 0.4.0\n");
++  printf("target: X68000 / Human68k\n");
++}
++
++static void
++x68k_show_core_version(void)
++{
++  printf("%s\n", MRUBY_DESCRIPTION);
++}
++
++static void
++x68k_print_open_failure(void)
++{
++  x68k_show_version();
++  x68k_show_core_version();
++  printf("error: not enough memory to initialize mruby VM\n");
++}
++
++static mrb_bool
++x68k_pre_scan_version_only(int argc, char **argv)
++{
++  return argc == 2 &&
++    (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-v") == 0);
++}
+ 
+ #if defined(_WIN32)
+ # include <io.h>
+@@ -145,6 +174,8 @@ dup_arg_item(mrb_state *mrb, const char *item)
+   return buf;
+ }
+ 
++#define X68K_EXIT_VERSION 2
++
+ static int
+ parse_args(mrb_state *mrb, int argc, char **argv, struct mrb_args *args)
+ {
+@@ -179,14 +210,17 @@ parse_args(mrb_state *mrb, int argc, char **argv, struct mrb_args *args)
+     }
+     else if (strcmp(opt, "v") == 0) {
+       if (!args->verbose) {
++        x68k_show_version();
+         mrb_show_version(mrb);
+         args->version = TRUE;
+       }
+       args->verbose = TRUE;
+     }
+     else if (strcmp(opt, "version") == 0) {
++      x68k_show_version();
+       mrb_show_version(mrb);
+-      exit(EXIT_SUCCESS);
++      args->version = TRUE;
++      return X68K_EXIT_VERSION;
+     }
+     else if (strcmp(opt, "verbose") == 0) {
+       args->verbose = TRUE;
+@@ -248,19 +282,29 @@ cleanup(mrb_state *mrb, struct mrb_args *args)
+ int
+ main(int argc, char **argv)
+ {
++  if (x68k_pre_scan_version_only(argc, argv)) {
++    x68k_show_version();
++    x68k_show_core_version();
++    return EXIT_SUCCESS;
++  }
++
+   mrb_state *mrb = mrb_open();
+-  int n = -1;
++  int n = EXIT_SUCCESS;
+   struct mrb_args args;
+   mrb_value ARGV;
+   mrb_value v;
+ 
+   if (MRB_OPEN_FAILURE(mrb)) {
+-    mrb_print_error(mrb);
++    x68k_print_open_failure();
+     mrb_close(mrb);
+     return EXIT_FAILURE;
+   }
+ 
+   n = parse_args(mrb, argc, argv, &args);
++  if (n == X68K_EXIT_VERSION) {
++    cleanup(mrb, &args);
++    return EXIT_SUCCESS;
++  }
+   if (n == EXIT_FAILURE || args.rfp == NULL) {
+     cleanup(mrb, &args);
+     return n;

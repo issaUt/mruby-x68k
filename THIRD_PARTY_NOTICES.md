@@ -32,6 +32,18 @@ are not subject to distribution restrictions from libzm2. The libzm2 author
 also confirmed that mruby-x68k may use libzm2 and distribute binaries built
 with it.
 
+
+## mattn/mruby-require
+
+The `load` / `require` implementation in `mruby-x68k-os` is adapted from
+`mattn/mruby-require`. Dynamic shared-library loading from the original
+implementation is not used on Human68k; mruby-x68k supports Ruby source
+loading in compiler-enabled builds and `.mrb` loading in VM builds.
+
+- Project: https://github.com/mattn/mruby-require
+- Author: mattn
+- License: MIT
+
 ## elf2x68k
 
 elf2x68k is developed separately by yunkya2.

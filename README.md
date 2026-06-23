@@ -20,8 +20,13 @@ v0.3.0 では kg68k / TcbnErik さんの [libzm2](https://github.com/kg68k/libzm
 - `mruby.x` による Ruby スクリプト実行
 - `puts`, `print`, `p`, `printf`
 - バッククォートによるコマンド実行結果の文字列取得（暫定導入）
-- `File.exist?`, `File.directory?`, `File.file?`, `File.read`, `File.write`, `File.size`, `File.open`
-- `Dir.entries`
+- `system` による外部コマンド実行と `$?` による終了ステータス取得
+- `File.exist?`, `File.directory?`, `File.file?`, `File.basename`, `File.dirname`, `File.extname`, `File.expand_path`, `File.read`, `File.readlines`, `File.write`, `File.size`, `File.open`, `File.delete`, `File.rename`, `File.copy`
+- `Dir.entries`, `Dir.glob`, `Dir.pwd`, `Dir.chdir`, `Dir.mkdir`, `Dir.exist?`, `Dir.delete`, `Dir.rename`
+- `FileUtils.cp`, `FileUtils.mv`, `FileUtils.mkdir`, `FileUtils.rm`, `FileUtils.rmdir`
+- `ENV[名前]`, `ENV[名前] = 値`, `ENV.delete(名前)`, `ENV.keys`
+- 小さな `Pathname` 補助クラス
+- `load` / `require` による `.rb` / `.mrb` 読み込み
 - IOCS ベースのグラフィック描画
 - テキスト表示、カーソル制御、画面クリア
 - キーボード入力、ジョイスティック入力
@@ -36,79 +41,48 @@ v0.3.0 では kg68k / TcbnErik さんの [libzm2](https://github.com/kg68k/libzm
 
 ## サンプル
 
-主なサンプルは `samples/` にあります。
+サンプルは `samples/` 配下で機能別に整理しています。
 
-- `HexCheck.rb`: HEXファイル変換系の実用ツール例
-- `bg_main.rb`, `bg_map.rb`: BG表示とスクロールの確認
-- `graph_demo.rb`: グラフィック画面への線・矩形・塗りつぶし描画
-- `joy_spr.rb`, `spr_move.rb`: 入力とスプライト移動
-- `ajoy_chk.rb`: AJOY.X 経由の CyberStick / アナログジョイスティック確認
-- `backquote_chk.rb`: 暫定導入したバッククォートで外部コマンドの標準出力を取得する確認
-- `bq_dir_sort.rb`: バッククォートで取得した `dir` 出力をRubyで整形・ソートする例
-- `bq_grep_cmd.rb`: `Dir.entries` で集めたファイルに外部 `grep` を実行し、結果をRuby側でまとめる例
-- `tree_grep.rb`: `Dir.entries` と `File` APIで再帰的にソースを検索する例
-- `cyber_flight.rb`: CyberStick / AJOY.X 入力を使ったワイヤーフレーム風フライト確認
-- `map_chk.rb`: BGマップ表示確認
-- `crtc_chk.rb`: CRTC垂直表示/垂直帰線待ちの確認
-- `sys_iocs_chk.rb`: スーパーバイザ切り替え、割り込み禁止、汎用IOCS呼び出しの確認
-- `int_poll_chk.rb`: VSync割り込みをpoll方式で確認するテスト
-- `int_raster_chk.rb`: Raster割り込みをpoll方式で確認するテスト
-- `int_timer_chk.rb`: Timer-D割り込みをpoll方式で確認するテスト
-- `zm_test.rb`: Z-MUSIC常駐確認とZMD再生の最小テスト
-- `zm_se.rb`, `zm_adpcm.rb`: Z-MUSIC効果音/ADPCM再生の最小テスト
-- `zm_game_audio.rb`: BGM再生中にキー入力でZMD効果音/ADPCMを鳴らすテスト
-- `maze_chase.rb`: BGM/SE/VSync/BG/スプライトを使ったパックマン風ゲームサンプル
+```text
+samples/os/        バッククォート、File/Dir/ENV、grep系、実用ツール
+samples/graphics/  グラフィック、BG、スプライト
+samples/input/     キーボード、ジョイスティック、CyberStick
+samples/sound/     Z-MUSIC、SE、ADPCM
+samples/games/     ゲーム、デモ
+samples/system/    CRTC、割り込み、IOCS、スーパーバイザ
+samples/ZMD/       Z-MUSIC用サンプル音源
+```
+
+主なサンプル:
+
+- `samples/games/maze_chase.rb`: BG / スプライト / 入力 / VSync / Z-MUSIC を使ったパックマン風サンプル。
+- `samples/games/cyber_flight.rb`: AJOY.X 経由の CyberStick 入力を使ったワイヤーフレーム風フライトデモ。
+- `samples/os/tree_grep.rb`: `Dir.entries` / `File.readlines` を使い、Rubyだけで再帰検索とgrep相当処理を行う例。
+- `samples/os/bq_grep_cmd.rb`: 外部 `grep` を呼び出し、結果をRuby側でまとめる例。
+- `samples/sound/zm_game_audio.rb`: BGM再生中にSE/ADPCMを鳴らすゲーム用途サンプル。
+
+詳細な一覧は [docs/samples.md](docs/samples.md) を参照してください。
+
+`maze_chase.rb` の実行例:
+
+```text
+mruby samples/games/maze_chase.rb
+mruby samples/games/maze_chase.rb joy
+mruby samples/games/maze_chase.rb 2
+mruby samples/games/maze_chase.rb wait=2
+mruby samples/games/maze_chase.rb speed=30
+mruby samples/games/maze_chase.rb noaudio
+mruby samples/games/maze_chase.rb clear
+```
+
+無指定時はキーボード操作、敵4体で起動します。`joy` / `joystick` を指定するとジョイスティック操作になります。
+`wait=N` はゲームループごとに待つVBlank数です。高速な実機では `wait=2`〜`wait=4` あたりで速度を落とせます。
+`noaudio` / `no-audio` を指定すると Z-MUSIC なしで実行できます。
 
 Z-MUSIC用のサンプル音源は `samples/ZMD/` に含めています。
-
-```text
-samples/ZMD/simplebgm.ZMD   通常BGM
-samples/ZMD/attackbgm.ZMD   パワー餌中BGM
-samples/ZMD/eat.ZMD         ドット取得SE
-samples/ZMD/charge.ZMD      パワー餌/敵撃破SE
-samples/ZMD/miss.ZMD        ミス時ジングル
-samples/ZMD/laser.ZMD       Z-MUSIC SEテスト用
-samples/ZMD/snare.pcm       ADPCMテスト用
-```
-
-`maze_chase.rb` は、X68000 の BG / スプライト / ジョイスティック入力 / Z-MUSIC を使用して「mrubyでゲームらしいものを書けるか」を見るためのサンプルです。
-
-実装済みの要素:
-
-- BGによる迷路表示
-- スプライトによる自機と敵
-- ジョイスティック/キーボード移動
-- 餌、パワー餌、スコア
-- 敵の追跡、散開、反撃時の逃走
-- 反撃時の青表示と終了直前の点滅
-- 残機、ミス時の再開、全餌取得時のクリア表示
-- 左右ワープ通路と敵のトンネル減速
-- VBlank待ちによるフレーム同期
-- 通常BGM、パワー餌中BGM、ドット/敵撃破/ミス音
-- 固定小数点による速度差表現
-
-実行例:
-
-```text
-mruby maze_chase.rb
-mruby maze_chase.rb joy
-mruby maze_chase.rb 2
-mruby maze_chase.rb wait=2
-mruby maze_chase.rb speed=30
-mruby maze_chase.rb noaudio
-mruby maze_chase.rb clear
-```
-
-無指定時はキーボード操作、敵4体で起動します。
-`joy` / `joystick` を指定するとジョイスティック操作になります。
-`clear` はクリア表示確認用のテストモードです。
-`wait=N` はゲームループごとに待つVBlank数です。高速な実機では `wait=2`〜`wait=4` あたりで速度を落とせます。
-`speed=30` は `wait=2` 相当の指定です。
-`noaudio` / `no-audio` を指定すると Z-MUSIC なしで実行できます。
-ファイル名は X68000 / Human68k で扱いやすいよう、拡張子込み21文字以内にしています。
-
-CyberStick / アナログジョイスティック対応は AJOY.X を外部常駐ドライバとして使用します。詳細は [docs/cyberstick-ajoy.md](docs/cyberstick-ajoy.md) を参照してください。
-実装上のメモは [docs/game-sample-notes.md](docs/game-sample-notes.md) にまとめています。
+CyberStick / アナログジョイスティック対応の詳細は [docs/cyberstick-ajoy.md](docs/cyberstick-ajoy.md)、
+ゲームサンプルの実装メモは [docs/game-sample-notes.md](docs/game-sample-notes.md)、
+OS周りのAPIは [docs/os-shell-apis.md](docs/os-shell-apis.md) にまとめています。
 
 ## 低レベル制御
 
@@ -239,18 +213,39 @@ SE側ZMDに `T` / `@T` などのテンポコマンドが含まれると、BGM側
 
 ## ビルド
 
-開発時に使っているローカル環境では、mruby ソースツリーに `mrbgems/mruby-x68k-stdio` を配置し、X68000向け設定でビルドします。
+開発時に使っているローカル環境では、mruby ソースツリーに `mruby-x68k-os` と `mruby-x68k-hardware` を配置し、用途に合わせて X68000 向け設定でビルドします。標準のフル構成では両方の gem を組み込みます。
 
 ```sh
 cd /home/utsu/work/elf2x68k/mruby-host
-MRUBY_CONFIG=x68k rake -j2
+./minirake MRUBY_CONFIG=build_config/x68k.rb
 ```
 
-生成される実行ファイル:
+生成される主な実行ファイル:
 
 ```text
-build/x68k/bin/mruby.x
+build/x68k/bin/mruby.x        .rb を直接実行できるフル版
+build/x68k/bin/mrbc.x         .rb から .mrb を生成するコンパイラ
 ```
+
+`.mrb` 実行専用VMやOS-only構成も含めて全構成をまとめて作る場合は、`build_config/x68k-all.rb` を使います。
+
+```text
+build/x68k-mrb/bin/mrb.x      .mrb 実行専用のフル版VM
+build/x68k-os-mrb/bin/mrb.x   .mrb 実行専用のOS-only版VM
+```
+
+配布用アーカイブでは、実行ファイルは `bin/` にまとめます。
+
+```text
+bin/mruby.x
+bin/mrbc.x
+bin/mrb.x
+bin/mrb-os.x
+```
+
+`mrb.x` / `mrb-os.x` は mruby/c ではありません。
+mruby本体のRiteBinary `.mrb` を実行するための、コンパイラを含まない軽量VMです。
+`.rb` ソースのコンパイルは `mruby.x` または `mrbc.x` で行います。
 
 配布用の `mruby.x` では、`mruby --version` / `mruby -v` で `mruby-x68k` のバージョンも表示するため、
 [patches/mruby-bin-mruby-x68k-version.patch](patches/mruby-bin-mruby-x68k-version.patch) を mruby 側の `mruby-bin-mruby` に適用しています。

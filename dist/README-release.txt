@@ -1,12 +1,15 @@
-mruby-x68k v0.3.1
+mruby-x68k v0.4.0
 
-This archive contains mruby.x and runnable samples for Sharp X68000 / Human68k.
+This archive contains X68000 mruby binaries and runnable samples for Sharp X68000 / Human68k.
 
 Contents:
-- mruby.x: mruby interpreter binary for X68000
+- bin/mruby.x: full mruby interpreter binary for X68000
+- bin/mrbc.x: Ruby to RiteBinary compiler for X68000
+- bin/mrb.x: full compiler-free mruby RiteBinary VM, not mruby/c
+- bin/mrb-os.x: OS-only compiler-free mruby RiteBinary VM, not mruby/c
 - samples/: Ruby samples and sample assets
 - README-release.txt
-- release-notes-v0.3.1.md
+- release-notes-v0.4.0.md
 - LICENSE
 - THIRD_PARTY_NOTICES.md
 - third_party/libzm2/COPYING
@@ -24,7 +27,7 @@ Example:
   mruby backquote_chk.rb
 
 Version output:
-  mruby-x68k 0.3.1
+  mruby-x68k 0.4.0
   target: X68000 / Human68k
   mruby 4.0.0 (2026-04-20)
 
@@ -34,6 +37,7 @@ Notes:
 - CyberStick / analog joystick samples require resident AJOY.X.
 - SEGA 3B/6B samples require an adapter where TH/Select is wired to joystick pin 8.
 - Backquote support is provisional. It captures stdout through temporary-file redirection.
+- mrb.x and mrb-os.x are built from mruby. They are not mruby/c; they only execute precompiled RiteBinary .mrb files.
 - maze_chase.rb runs without Z-MUSIC when noaudio is specified.
 - This binary was built for the experimental mruby-x68k runtime.
 - The source repository does not bundle mruby, xdev68k, elf2x68k, GCC, newlib, emulator binaries, Z-MUSIC.X, or AJOY.X.
